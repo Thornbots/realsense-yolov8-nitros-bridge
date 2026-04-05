@@ -18,24 +18,35 @@
 """
 isaac_ros_yolov8_realsense.launch.py
 
-Starts a D435i (or any D4xx) with default realsense-ros topic layout and
-connects it directly to the isaac_ros YOLOv8 TensorRT pipeline.
+Starts a D435i (or any D4xx) and connects it to the isaac_ros YOLOv8
+TensorRT pipeline. All nodes share a single component_container_mt so
+that ROS 2 intra-process communication (IPC) is available between them.
 
-Topic flow (no remapping of realsense outputs):
-  /camera/camera/color/image_raw     ──► dnn_image_encoder ──► /tensor_pub
-  /camera/camera/color/camera_info   ──► dnn_image_encoder
-                                           ──► TensorRTNode ──► /tensor_sub
-                                           ──► YoloV8DecoderNode ──► /detections
+─── Topic layout ────────────────────────────────────────────────────────────
 
-All nodes land in a single component_container_mt so that ROS 2
-intra-process communication (IPC) is available between them.
+The published topic path depends on how the realsense node is loaded:
 
-Usage
------
-ros2 launch <your_package> isaac_ros_yolov8_realsense.launch.py \\
-    engine_file_path:=/path/to/yolov8n.plan \\
-    [input_image_width:=1280] [input_image_height:=720] \\
-    [confidence_threshold:=0.25] [nms_threshold:=0.45]
+  Via rs_launch.py (plain Node, camera_namespace='camera', camera_name='camera'):
+    FQN = /camera/camera  →  /camera/camera/color/image_raw   (docs default)
+
+  Via isaac_ros_realsense ComposableNode (namespace='', name='camera'):
+    The component loader injects __ns:='' which overrides the hardcoded
+    "/camera" absolute namespace in RealSenseNodeFactory's constructor,
+    leaving the node in the root namespace with only its name "camera".
+    Effective FQN = /camera  →  /camera/color/image_raw       (actual behaviour)
+
+This file matches the isaac_ros_realsense / ComposableNode behaviour,
+which is what ros-humble-isaac-ros-realsense (installed in the Dockerfile)
+produces.  If you are instead running a standalone rs_launch.py with its
+default camera_namespace='camera', change the two REALSENSE_*_TOPIC
+constants to the /camera/camera/... variants.
+
+─── Usage ───────────────────────────────────────────────────────────────────
+
+  ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \\
+      engine_file_path:=/path/to/yolov8n.plan \\
+      [input_image_width:=640] [input_image_height:=480] \\
+      [confidence_threshold:=0.25] [nms_threshold:=0.45]
 """
 
 import os
@@ -49,13 +60,24 @@ from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 
-# ── Camera defaults ─────────────────────────────────────────────────────────
-# These match realsense-ros 4.x defaults: camera_name=camera,
-# camera_namespace=camera → /camera/camera/color/image_raw etc.
-REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
+# ── Topic roots ───────────────────────────────────────────────────────────────
+#
+# RealSenseNodeFactory hardcodes rclcpp::Node("camera", "/camera", node_options).
+# When loaded as a ComposableNode with namespace='', the component loader injects
+# __ns:='' into node_options, which overrides the hardcoded "/camera" namespace.
+# The node therefore lands in the root namespace with name "camera":
+#   FQN = /camera,  ~/foo  →  /camera/foo
+#
+# If you switch to rs_launch.py (plain Node, camera_namespace='camera'):
+#   FQN = /camera/camera,  ~/foo  →  /camera/camera/foo
+# and you would need:
+#   REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
+#   REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
+#
+REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
 
-# Default resolution — override with launch args if your D435i runs differently
+# Default stream resolution
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
 DEFAULT_INPUT_FPS = '30'
@@ -63,20 +85,16 @@ DEFAULT_INPUT_FPS = '30'
 
 def generate_launch_description():
 
-    # ── Launch arguments ─────────────────────────────────────────────────────
+    # ── Launch arguments ──────────────────────────────────────────────────────
     launch_args = [
         # Camera
-        DeclareLaunchArgument('camera_name',      default_value='camera',
-                              description='realsense-ros camera name (sets node name)'),
-        DeclareLaunchArgument('camera_namespace', default_value='camera',
-                              description='realsense-ros camera namespace'),
-        DeclareLaunchArgument('serial_no',        default_value="''",
+        DeclareLaunchArgument('serial_no', default_value="''",
                               description='Select D435i by serial number (empty = any)'),
         DeclareLaunchArgument('input_image_width',  default_value=DEFAULT_INPUT_W,
                               description='Color stream width'),
         DeclareLaunchArgument('input_image_height', default_value=DEFAULT_INPUT_H,
                               description='Color stream height'),
-        DeclareLaunchArgument('color_fps',          default_value=DEFAULT_INPUT_FPS,
+        DeclareLaunchArgument('color_fps', default_value=DEFAULT_INPUT_FPS,
                               description='Color stream FPS'),
 
         # Network / preprocessing
@@ -89,7 +107,7 @@ def generate_launch_description():
         DeclareLaunchArgument('image_stddev',  default_value='[1.0, 1.0, 1.0]',
                               description='Per-channel std-dev for normalisation'),
         DeclareLaunchArgument('input_encoding', default_value='rgb8',
-                              description='Encoding expected by encoder (rgb8 or bgr8)'),
+                              description='Encoding expected by the DNN encoder'),
 
         # TensorRT
         DeclareLaunchArgument('model_file_path',     default_value='',
@@ -108,13 +126,11 @@ def generate_launch_description():
         DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
     ]
 
-    # ── LaunchConfiguration handles ─────────────────────────────────────────
-    camera_name      = LaunchConfiguration('camera_name')
-    camera_namespace = LaunchConfiguration('camera_namespace')
-    serial_no        = LaunchConfiguration('serial_no')
-    input_w          = LaunchConfiguration('input_image_width')
-    input_h          = LaunchConfiguration('input_image_height')
-    color_fps        = LaunchConfiguration('color_fps')
+    # ── LaunchConfiguration handles ───────────────────────────────────────────
+    serial_no  = LaunchConfiguration('serial_no')
+    input_w    = LaunchConfiguration('input_image_width')
+    input_h    = LaunchConfiguration('input_image_height')
+    color_fps  = LaunchConfiguration('color_fps')
 
     network_w    = LaunchConfiguration('network_image_width')
     network_h    = LaunchConfiguration('network_image_height')
@@ -133,24 +149,24 @@ def generate_launch_description():
     confidence_threshold = LaunchConfiguration('confidence_threshold')
     nms_threshold        = LaunchConfiguration('nms_threshold')
 
-    # ── RealSense composable node ────────────────────────────────────────────
-    # Runs inside the SAME container as the NITROS pipeline so that rclcpp
-    # intra-process can hand a shared_ptr<Image> to the encoder without a copy.
+    # ── RealSense composable node ─────────────────────────────────────────────
     #
-    # QoS note: rclcpp IPC requires VOLATILE durability on every publisher that
-    # participates in intra-process delivery.  'SYSTEM_DEFAULT' maps to
-    # rmw_qos_profile_system_default, whose durability field is left to the
-    # middleware to decide — rclcpp treats this as potentially non-VOLATILE and
-    # raises "intraprocess communication allowed only with volatile durability".
+    # namespace='' matches the isaac_ros_realsense convention.  The component
+    # loader injects __ns:='' into NodeOptions, which overrides the hardcoded
+    # "/camera" absolute namespace in RealSenseNodeFactory's constructor and
+    # places the node in the root namespace.  Combined with the hardcoded node
+    # name "camera" this gives FQN=/camera and topics at /camera/color/...
     #
-    # 'DEFAULT' maps to rmw_qos_profile_default which explicitly sets
-    # RMW_QOS_POLICY_DURABILITY_VOLATILE, satisfying the IPC constraint.
-    # It is otherwise equivalent for image streaming (RELIABLE, KEEP_LAST 10).
+    # color_qos='DEFAULT' = rmw_qos_profile_default = explicitly VOLATILE
+    # durability, which is required for rclcpp intra-process communication.
+    # 'SYSTEM_DEFAULT' leaves durability implementation-defined; rclcpp rejects
+    # it for IPC with "intraprocess communication allowed only with volatile
+    # durability".
     realsense_node = ComposableNode(
         package='realsense2_camera',
         plugin='realsense2_camera::RealSenseNodeFactory',
-        name=camera_name,
-        namespace=camera_namespace,
+        name='camera',
+        namespace='',
         parameters=[{
             'serial_no':      serial_no,
             'enable_color':   True,
@@ -161,15 +177,12 @@ def generate_launch_description():
             'enable_accel':   False,
             'rgb_camera.color_profile': [input_w, 'x', input_h, 'x', color_fps],
             'rgb_camera.color_format':  'RGB8',
-            # 'DEFAULT' = rmw_qos_profile_default → explicitly VOLATILE durability.
-            # Required for rclcpp intra-process communication.
-            # 'SYSTEM_DEFAULT' leaves durability unspecified and will crash with IPC.
             'color_qos': 'DEFAULT',
         }],
         extra_arguments=[{'use_intra_process_comms': True}],
     )
 
-    # ── TensorRT inference node ──────────────────────────────────────────────
+    # ── TensorRT inference node ───────────────────────────────────────────────
     tensor_rt_node = ComposableNode(
         name='tensor_rt',
         package='isaac_ros_tensor_rt',
@@ -186,7 +199,7 @@ def generate_launch_description():
         }],
     )
 
-    # ── YOLOv8 decoder node ──────────────────────────────────────────────────
+    # ── YOLOv8 decoder node ───────────────────────────────────────────────────
     yolov8_decoder_node = ComposableNode(
         name='yolov8_decoder_node',
         package='isaac_ros_yolov8',
@@ -197,7 +210,7 @@ def generate_launch_description():
         }],
     )
 
-    # ── Shared component container ───────────────────────────────────────────
+    # ── Shared component container ────────────────────────────────────────────
     container = ComposableNodeContainer(
         name='yolov8_realsense_container',
         namespace='',
@@ -212,7 +225,7 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'INFO'],
     )
 
-    # ── DNN Image Encoder (attaches to shared container) ─────────────────────
+    # ── DNN Image Encoder (attaches to the shared container) ─────────────────
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     yolov8_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
