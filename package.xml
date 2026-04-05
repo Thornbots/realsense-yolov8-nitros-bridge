@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd"
+            schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>realsense_yolov8_nitros_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Bridging node that receives a sensor_msgs/Image from realsense-ros,
+    stages it through CUDA pinned memory, and publishes a NitrosImage so
+    that the downstream Isaac ROS YOLOv8 / TensorRT pipeline can consume
+    it without any further CPU↔GPU copy.
+  </description>
+  <maintainer email="jenninbl@RHIT.edu">Thornbots</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- ── build system ──────────────────────────────────────────────────── -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- ── compile-time dependencies ────────────────────────────────────── -->
+
+  <!-- Core ROS 2 node infrastructure -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+
+  <!-- Standard image message (subscription side) -->
+  <depend>sensor_msgs</depend>
+
+  <!-- NITROS managed publisher + NitrosImage type -->
+  <depend>isaac_ros_managed_nitros</depend>
+  <depend>isaac_ros_nitros_image_type</depend>
+
+  <!-- Launch-time: the bridge launch file includes the dnn_image_encoder
+       launch file and references isaac_ros_yolov8 / isaac_ros_tensor_rt
+       composable nodes, so they must be present at runtime. -->
+  <exec_depend>isaac_ros_dnn_image_encoder</exec_depend>
+  <exec_depend>isaac_ros_yolov8</exec_depend>
+  <exec_depend>isaac_ros_tensor_rt</exec_depend>
+
+  <!-- realsense2_camera is the upstream producer -->
+  <exec_depend>realsense2_camera</exec_depend>
+
+  <!-- ── CUDA is a system dependency; listed here for documentation.
+         CMakeLists finds it via find_package(CUDA) / find_package(CUDAToolkit). -->
+
+  <!-- ── test infrastructure (optional) ───────────────────────────────── -->
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
