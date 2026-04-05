@@ -74,8 +74,8 @@ from launch_ros.descriptions import ComposableNode
 #   REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
 #   REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
 #
-REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
 
 # Default stream resolution
 DEFAULT_INPUT_W   = '640'
