@@ -56,8 +56,8 @@ REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
 REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
 
 # Default resolution — override with launch args if your D435i runs differently
-DEFAULT_INPUT_W  = '640'
-DEFAULT_INPUT_H  = '480'
+DEFAULT_INPUT_W   = '640'
+DEFAULT_INPUT_H   = '480'
 DEFAULT_INPUT_FPS = '30'
 
 
@@ -116,11 +116,11 @@ def generate_launch_description():
     input_h          = LaunchConfiguration('input_image_height')
     color_fps        = LaunchConfiguration('color_fps')
 
-    network_w   = LaunchConfiguration('network_image_width')
-    network_h   = LaunchConfiguration('network_image_height')
-    image_mean  = LaunchConfiguration('image_mean')
-    image_stddev= LaunchConfiguration('image_stddev')
-    encoding    = LaunchConfiguration('input_encoding')
+    network_w    = LaunchConfiguration('network_image_width')
+    network_h    = LaunchConfiguration('network_image_height')
+    image_mean   = LaunchConfiguration('image_mean')
+    image_stddev = LaunchConfiguration('image_stddev')
+    encoding     = LaunchConfiguration('input_encoding')
 
     model_file_path      = LaunchConfiguration('model_file_path')
     engine_file_path     = LaunchConfiguration('engine_file_path')
@@ -134,42 +134,39 @@ def generate_launch_description():
     nms_threshold        = LaunchConfiguration('nms_threshold')
 
     # ── RealSense composable node ────────────────────────────────────────────
-    # Runs inside the SAME container as the NITROS pipeline so that
-    # rclcpp intra-process can hand shared_ptr<Image> without a copy
-    # between the camera node and the dnn_image_encoder.
+    # Runs inside the SAME container as the NITROS pipeline so that rclcpp
+    # intra-process can hand a shared_ptr<Image> to the encoder without a copy.
     #
-    # NOTE: IPC eliminates the CPU-copy between realsense-ros and the
-    # dnn_image_encoder (sensor_msgs::Image shared_ptr).  The remaining
-    # cudaMemcpyDefault from the encoder into GPU memory is unavoidable
-    # until realsense-ros natively wraps its frames in a NitrosImage.
-    # See NOTES.md for a detailed discussion.
+    # QoS note: rclcpp IPC requires VOLATILE durability on every publisher that
+    # participates in intra-process delivery.  'SYSTEM_DEFAULT' maps to
+    # rmw_qos_profile_system_default, whose durability field is left to the
+    # middleware to decide — rclcpp treats this as potentially non-VOLATILE and
+    # raises "intraprocess communication allowed only with volatile durability".
+    #
+    # 'DEFAULT' maps to rmw_qos_profile_default which explicitly sets
+    # RMW_QOS_POLICY_DURABILITY_VOLATILE, satisfying the IPC constraint.
+    # It is otherwise equivalent for image streaming (RELIABLE, KEEP_LAST 10).
     realsense_node = ComposableNode(
         package='realsense2_camera',
         plugin='realsense2_camera::RealSenseNodeFactory',
         name=camera_name,
         namespace=camera_namespace,
         parameters=[{
-            'serial_no':           serial_no,
-            'enable_color':        True,
-            'enable_depth':        False,   # set True if you also want /depth
-            'enable_infra1':       False,
-            'enable_infra2':       False,
-            'enable_gyro':         False,
-            'enable_accel':        False,
-            # Build the profile string programmatically so the user only sets
-            # individual args — LaunchConfiguration can't do arithmetic, so we
-            # keep a fixed format string and let the user override the defaults.
+            'serial_no':      serial_no,
+            'enable_color':   True,
+            'enable_depth':   False,
+            'enable_infra1':  False,
+            'enable_infra2':  False,
+            'enable_gyro':    False,
+            'enable_accel':   False,
             'rgb_camera.color_profile': [input_w, 'x', input_h, 'x', color_fps],
             'rgb_camera.color_format':  'RGB8',
-            'color_qos': 'SYSTEM_DEFAULT',
-            # Publish at sensor QoS so downstream NITROS nodes can match it
+            # 'DEFAULT' = rmw_qos_profile_default → explicitly VOLATILE durability.
+            # Required for rclcpp intra-process communication.
+            # 'SYSTEM_DEFAULT' leaves durability unspecified and will crash with IPC.
+            'color_qos': 'DEFAULT',
         }],
-        extra_arguments=[
-            # Enable IPC within the shared container.
-            # This means the realsense node hands a shared_ptr<Image> to the
-            # encoder node's subscription without any serialise/deserialise copy.
-            {'use_intra_process_comms': True}
-        ],
+        extra_arguments=[{'use_intra_process_comms': True}],
     )
 
     # ── TensorRT inference node ──────────────────────────────────────────────
@@ -201,13 +198,6 @@ def generate_launch_description():
     )
 
     # ── Shared component container ───────────────────────────────────────────
-    # component_container_mt is used (multi-threaded) to match what the
-    # NITROS pipeline expects and to allow concurrent callback execution.
-    #
-    # All four nodes (realsense + encoder + tensor_rt + decoder) share one
-    # container, which is the minimum requirement for:
-    #   (a) ROS 2 IPC between realsense and encoder (shared_ptr handoff)
-    #   (b) NITROS zero-copy between encoder, tensor_rt, and decoder
     container = ComposableNodeContainer(
         name='yolov8_realsense_container',
         namespace='',
@@ -222,38 +212,23 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'INFO'],
     )
 
-    # ── DNN Image Encoder (launched separately; attaches to container) ───────
-    # The encoder is brought in via IncludeLaunchDescription because it uses
-    # its own launch file to set up the ResizeNode + ImageToTensorNode chain.
-    # We attach it to our shared container via the attach_to_shared_component_container
-    # mechanism so it participates in NITROS negotiation with tensor_rt_node.
-    #
-    # image_input_topic is the *only* place we reference the realsense topic —
-    # and we read it directly from its default location, no remapping needed.
+    # ── DNN Image Encoder (attaches to shared container) ─────────────────────
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     yolov8_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')
         ),
         launch_arguments={
-            # Wire directly to realsense default topics — no remapping
             'image_input_topic':       REALSENSE_COLOR_TOPIC,
             'camera_info_input_topic': REALSENSE_INFO_TOPIC,
             'tensor_output_topic':     '/tensor_pub',
-
-            # Image dimensions (must match what the camera is configured to stream)
-            'input_image_width':  input_w,
-            'input_image_height': input_h,
-
-            # Network preprocessing spec
-            'network_image_width':  network_w,
-            'network_image_height': network_h,
-            'image_mean':           image_mean,
-            'image_stddev':         image_stddev,
-            'input_encoding':       encoding,
-
-            # Attach encoder nodes into our shared container so NITROS
-            # negotiation can eliminate copies across the encoder→TRT boundary
+            'input_image_width':       input_w,
+            'input_image_height':      input_h,
+            'network_image_width':     network_w,
+            'network_image_height':    network_h,
+            'image_mean':              image_mean,
+            'image_stddev':            image_stddev,
+            'input_encoding':          encoding,
             'attach_to_shared_component_container': 'True',
             'component_container_name':             'yolov8_realsense_container',
             'dnn_image_encoder_namespace':          'yolov8_encoder',
