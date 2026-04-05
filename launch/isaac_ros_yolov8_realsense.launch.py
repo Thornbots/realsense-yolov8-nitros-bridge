@@ -74,13 +74,13 @@ from launch_ros.descriptions import ComposableNode
 #   REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
 #   REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
 #
-REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
 
 # Default stream resolution
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
-DEFAULT_INPUT_FPS = '30'
+DEFAULT_INPUT_FPS = '60'
 
 
 def generate_launch_description():
@@ -166,7 +166,7 @@ def generate_launch_description():
         package='realsense2_camera',
         plugin='realsense2_camera::RealSenseNodeFactory',
         name='camera',
-        namespace='',
+        namespace='camera',
         parameters=[{
             'serial_no':      serial_no,
             'enable_color':   True,
