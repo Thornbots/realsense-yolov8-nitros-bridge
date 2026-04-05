@@ -76,7 +76,7 @@ def generate_launch_description():
 
     # ── Launch arguments ──────────────────────────────────────────────────────
     launch_args = [
-        DeclareLaunchArgument('serial_no', default_value="''",
+        DeclareLaunchArgument('serial_no', default_value='',
                               description='Select D435i by serial number (empty = any)'),
         DeclareLaunchArgument('input_image_width',  default_value=DEFAULT_INPUT_W,
                               description='Color stream width'),
