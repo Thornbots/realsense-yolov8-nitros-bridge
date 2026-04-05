@@ -1,0 +1,263 @@
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+isaac_ros_yolov8_realsense.launch.py
+
+Starts a D435i (or any D4xx) with default realsense-ros topic layout and
+connects it directly to the isaac_ros YOLOv8 TensorRT pipeline.
+
+Topic flow (no remapping of realsense outputs):
+  /camera/camera/color/image_raw     ──► dnn_image_encoder ──► /tensor_pub
+  /camera/camera/color/camera_info   ──► dnn_image_encoder
+                                           ──► TensorRTNode ──► /tensor_sub
+                                           ──► YoloV8DecoderNode ──► /detections
+
+All nodes land in a single component_container_mt so that ROS 2
+intra-process communication (IPC) is available between them.
+
+Usage
+-----
+ros2 launch <your_package> isaac_ros_yolov8_realsense.launch.py \\
+    engine_file_path:=/path/to/yolov8n.plan \\
+    [input_image_width:=1280] [input_image_height:=720] \\
+    [confidence_threshold:=0.25] [nms_threshold:=0.45]
+"""
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
+import launch
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import ComposableNodeContainer
+from launch_ros.descriptions import ComposableNode
+
+
+# ── Camera defaults ─────────────────────────────────────────────────────────
+# These match realsense-ros 4.x defaults: camera_name=camera,
+# camera_namespace=camera → /camera/camera/color/image_raw etc.
+REALSENSE_COLOR_TOPIC = '/camera/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/camera/color/camera_info'
+
+# Default resolution — override with launch args if your D435i runs differently
+DEFAULT_INPUT_W  = '640'
+DEFAULT_INPUT_H  = '480'
+DEFAULT_INPUT_FPS = '30'
+
+
+def generate_launch_description():
+
+    # ── Launch arguments ─────────────────────────────────────────────────────
+    launch_args = [
+        # Camera
+        DeclareLaunchArgument('camera_name',      default_value='camera',
+                              description='realsense-ros camera name (sets node name)'),
+        DeclareLaunchArgument('camera_namespace', default_value='camera',
+                              description='realsense-ros camera namespace'),
+        DeclareLaunchArgument('serial_no',        default_value="''",
+                              description='Select D435i by serial number (empty = any)'),
+        DeclareLaunchArgument('input_image_width',  default_value=DEFAULT_INPUT_W,
+                              description='Color stream width'),
+        DeclareLaunchArgument('input_image_height', default_value=DEFAULT_INPUT_H,
+                              description='Color stream height'),
+        DeclareLaunchArgument('color_fps',          default_value=DEFAULT_INPUT_FPS,
+                              description='Color stream FPS'),
+
+        # Network / preprocessing
+        DeclareLaunchArgument('network_image_width',  default_value='640',
+                              description='YOLOv8 input width'),
+        DeclareLaunchArgument('network_image_height', default_value='640',
+                              description='YOLOv8 input height'),
+        DeclareLaunchArgument('image_mean',    default_value='[0.0, 0.0, 0.0]',
+                              description='Per-channel mean for normalisation'),
+        DeclareLaunchArgument('image_stddev',  default_value='[1.0, 1.0, 1.0]',
+                              description='Per-channel std-dev for normalisation'),
+        DeclareLaunchArgument('input_encoding', default_value='rgb8',
+                              description='Encoding expected by encoder (rgb8 or bgr8)'),
+
+        # TensorRT
+        DeclareLaunchArgument('model_file_path',     default_value='',
+                              description='Absolute path to ONNX model'),
+        DeclareLaunchArgument('engine_file_path',    default_value='',
+                              description='Absolute path to TensorRT .plan engine'),
+        DeclareLaunchArgument('input_tensor_names',  default_value='["input_tensor"]'),
+        DeclareLaunchArgument('input_binding_names', default_value='["images"]'),
+        DeclareLaunchArgument('output_tensor_names', default_value='["output_tensor"]'),
+        DeclareLaunchArgument('output_binding_names',default_value='["output0"]'),
+        DeclareLaunchArgument('verbose',             default_value='False'),
+        DeclareLaunchArgument('force_engine_update', default_value='False'),
+
+        # Decoder
+        DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
+        DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
+    ]
+
+    # ── LaunchConfiguration handles ─────────────────────────────────────────
+    camera_name      = LaunchConfiguration('camera_name')
+    camera_namespace = LaunchConfiguration('camera_namespace')
+    serial_no        = LaunchConfiguration('serial_no')
+    input_w          = LaunchConfiguration('input_image_width')
+    input_h          = LaunchConfiguration('input_image_height')
+    color_fps        = LaunchConfiguration('color_fps')
+
+    network_w   = LaunchConfiguration('network_image_width')
+    network_h   = LaunchConfiguration('network_image_height')
+    image_mean  = LaunchConfiguration('image_mean')
+    image_stddev= LaunchConfiguration('image_stddev')
+    encoding    = LaunchConfiguration('input_encoding')
+
+    model_file_path      = LaunchConfiguration('model_file_path')
+    engine_file_path     = LaunchConfiguration('engine_file_path')
+    input_tensor_names   = LaunchConfiguration('input_tensor_names')
+    input_binding_names  = LaunchConfiguration('input_binding_names')
+    output_tensor_names  = LaunchConfiguration('output_tensor_names')
+    output_binding_names = LaunchConfiguration('output_binding_names')
+    verbose              = LaunchConfiguration('verbose')
+    force_engine_update  = LaunchConfiguration('force_engine_update')
+    confidence_threshold = LaunchConfiguration('confidence_threshold')
+    nms_threshold        = LaunchConfiguration('nms_threshold')
+
+    # ── RealSense composable node ────────────────────────────────────────────
+    # Runs inside the SAME container as the NITROS pipeline so that
+    # rclcpp intra-process can hand shared_ptr<Image> without a copy
+    # between the camera node and the dnn_image_encoder.
+    #
+    # NOTE: IPC eliminates the CPU-copy between realsense-ros and the
+    # dnn_image_encoder (sensor_msgs::Image shared_ptr).  The remaining
+    # cudaMemcpyDefault from the encoder into GPU memory is unavoidable
+    # until realsense-ros natively wraps its frames in a NitrosImage.
+    # See NOTES.md for a detailed discussion.
+    realsense_node = ComposableNode(
+        package='realsense2_camera',
+        plugin='realsense2_camera::RealSenseNodeFactory',
+        name=camera_name,
+        namespace=camera_namespace,
+        parameters=[{
+            'serial_no':           serial_no,
+            'enable_color':        True,
+            'enable_depth':        False,   # set True if you also want /depth
+            'enable_infra1':       False,
+            'enable_infra2':       False,
+            'enable_gyro':         False,
+            'enable_accel':        False,
+            # Build the profile string programmatically so the user only sets
+            # individual args — LaunchConfiguration can't do arithmetic, so we
+            # keep a fixed format string and let the user override the defaults.
+            'rgb_camera.color_profile': [input_w, 'x', input_h, 'x', color_fps],
+            'rgb_camera.color_format':  'RGB8',
+            'color_qos': 'SYSTEM_DEFAULT',
+            # Publish at sensor QoS so downstream NITROS nodes can match it
+        }],
+        extra_arguments=[
+            # Enable IPC within the shared container.
+            # This means the realsense node hands a shared_ptr<Image> to the
+            # encoder node's subscription without any serialise/deserialise copy.
+            {'use_intra_process_comms': True}
+        ],
+    )
+
+    # ── TensorRT inference node ──────────────────────────────────────────────
+    tensor_rt_node = ComposableNode(
+        name='tensor_rt',
+        package='isaac_ros_tensor_rt',
+        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
+        parameters=[{
+            'model_file_path':      model_file_path,
+            'engine_file_path':     engine_file_path,
+            'output_binding_names': output_binding_names,
+            'output_tensor_names':  output_tensor_names,
+            'input_tensor_names':   input_tensor_names,
+            'input_binding_names':  input_binding_names,
+            'verbose':              verbose,
+            'force_engine_update':  force_engine_update,
+        }],
+    )
+
+    # ── YOLOv8 decoder node ──────────────────────────────────────────────────
+    yolov8_decoder_node = ComposableNode(
+        name='yolov8_decoder_node',
+        package='isaac_ros_yolov8',
+        plugin='nvidia::isaac_ros::yolov8::YoloV8DecoderNode',
+        parameters=[{
+            'confidence_threshold': confidence_threshold,
+            'nms_threshold':        nms_threshold,
+        }],
+    )
+
+    # ── Shared component container ───────────────────────────────────────────
+    # component_container_mt is used (multi-threaded) to match what the
+    # NITROS pipeline expects and to allow concurrent callback execution.
+    #
+    # All four nodes (realsense + encoder + tensor_rt + decoder) share one
+    # container, which is the minimum requirement for:
+    #   (a) ROS 2 IPC between realsense and encoder (shared_ptr handoff)
+    #   (b) NITROS zero-copy between encoder, tensor_rt, and decoder
+    container = ComposableNodeContainer(
+        name='yolov8_realsense_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container_mt',
+        composable_node_descriptions=[
+            realsense_node,
+            tensor_rt_node,
+            yolov8_decoder_node,
+        ],
+        output='screen',
+        arguments=['--ros-args', '--log-level', 'INFO'],
+    )
+
+    # ── DNN Image Encoder (launched separately; attaches to container) ───────
+    # The encoder is brought in via IncludeLaunchDescription because it uses
+    # its own launch file to set up the ResizeNode + ImageToTensorNode chain.
+    # We attach it to our shared container via the attach_to_shared_component_container
+    # mechanism so it participates in NITROS negotiation with tensor_rt_node.
+    #
+    # image_input_topic is the *only* place we reference the realsense topic —
+    # and we read it directly from its default location, no remapping needed.
+    encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
+    yolov8_encoder_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')
+        ),
+        launch_arguments={
+            # Wire directly to realsense default topics — no remapping
+            'image_input_topic':       REALSENSE_COLOR_TOPIC,
+            'camera_info_input_topic': REALSENSE_INFO_TOPIC,
+            'tensor_output_topic':     '/tensor_pub',
+
+            # Image dimensions (must match what the camera is configured to stream)
+            'input_image_width':  input_w,
+            'input_image_height': input_h,
+
+            # Network preprocessing spec
+            'network_image_width':  network_w,
+            'network_image_height': network_h,
+            'image_mean':           image_mean,
+            'image_stddev':         image_stddev,
+            'input_encoding':       encoding,
+
+            # Attach encoder nodes into our shared container so NITROS
+            # negotiation can eliminate copies across the encoder→TRT boundary
+            'attach_to_shared_component_container': 'True',
+            'component_container_name':             'yolov8_realsense_container',
+            'dnn_image_encoder_namespace':          'yolov8_encoder',
+        }.items(),
+    )
+
+    return launch.LaunchDescription(launch_args + [container, yolov8_encoder_launch])
