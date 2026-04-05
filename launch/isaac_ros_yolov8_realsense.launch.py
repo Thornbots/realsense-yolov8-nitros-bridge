@@ -64,8 +64,8 @@ from launch_ros.descriptions import ComposableNode
 # ComposableNode(namespace='') causes the component loader to inject __ns:=''
 # which overrides the hardcoded "/camera" absolute namespace inside
 # RealSenseNodeFactory, leaving FQN=/camera and topics at /camera/color/...
-REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/color/camera_info'
 
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
