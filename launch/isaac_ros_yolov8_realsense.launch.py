@@ -82,8 +82,8 @@ from launch_ros.descriptions import ComposableNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
-REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/color/camera_info'
 
 # ── Defaults that mirror the shipped JSON config ──────────────────────────────
 DEFAULT_INPUT_W   = '640'
@@ -250,6 +250,7 @@ def generate_launch_description():
                 'component_container_name':             'yolov8_realsense_container',
                 'dnn_image_encoder_namespace':          'yolov8_encoder',
             }.items(),
+
         )
 
         return [container, yolov8_encoder_launch]
