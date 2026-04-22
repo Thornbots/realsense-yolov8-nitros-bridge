@@ -96,6 +96,11 @@ Common causes on Jetson / ThinkPad:
 ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan [input_image_width:=640] [input_image_height:=480] [confidence_threshold:=0.25] [nms_threshold:=0.45]
 
 """
+"""
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan
+
+"""
+
 
 
 import json
@@ -193,6 +198,7 @@ def generate_launch_description():
         # Any other format (including Python list serialisation) silently falls
         # back to the hardware default FPS.
         color_profile_str = f'{input_w}x{input_h}x{color_fps}'
+        print(f'[DEBUG] color_profile_str = {color_profile_str!r}')
 
         # ── RealSense composable node ─────────────────────────────────────────
         realsense_node = ComposableNode(
