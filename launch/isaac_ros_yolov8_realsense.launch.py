@@ -207,19 +207,21 @@ def generate_launch_description():
             name='camera',
             namespace='',
             parameters=[{
-                'serial_no':                 serial_no,
-                'enable_color':              True,
-                'enable_depth':              False,
-                'enable_infra1':             False,
-                'enable_infra2':             False,
-                'enable_gyro':               False,
-                'enable_accel':              False,
-                # Plain "WxHxFPS" string — the only format the regex accepts
-                'rgb_camera.color_profile':  color_profile_str,
-                'rgb_camera.color_format':   'RGB8',
-                # DEFAULT = rmw_qos_profile_default = explicitly VOLATILE,
-                # required for rclcpp intra-process communication.
-                'color_qos':                 'DEFAULT',
+                'serial_no':                serial_no,
+                'enable_color':             True,
+                'enable_depth':             False,
+                'enable_infra1':            False,
+                'enable_infra2':            False,
+                'enable_gyro':              False,
+                'enable_accel':             False,
+                'rgb_camera.color_profile': color_profile_str,   # '640x480x60'
+                'rgb_camera.color_format':  'RGB8',
+                # Remove 'DEFAULT' — it triggers a QoS-driven Stop/Start that
+                # clobbers the profile. SENSOR_DATA is the driver's own default.
+                'color_qos':                'SENSOR_DATA',
+                # Force a full hardware reset before init so parameters are
+                # applied on the one and only sensor start
+                'initial_reset':            True,
             }],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
