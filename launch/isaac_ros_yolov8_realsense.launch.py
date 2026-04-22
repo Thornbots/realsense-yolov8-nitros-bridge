@@ -19,89 +19,49 @@
 isaac_ros_yolov8_realsense.launch.py
 
 Starts a D435i (or any D4xx) and connects it to the isaac_ros YOLOv8
-TensorRT pipeline. All nodes share a single component_container_mt so
+TensorRT pipeline.  All nodes share a single component_container_mt so
 that ROS 2 intra-process communication (IPC) is available between them.
+
+─── Camera configuration via JSON ───────────────────────────────────────────
+
+Camera stream parameters (resolution, FPS, format, QoS) are loaded from a
+JSON file rather than passed as individual ROS parameters.  This matters
+because realsense-ros reads stream parameters during its internal
+getParameters() call at node construction time.  Parameters arriving
+through the ComposableNode parameter dict may be processed AFTER the first
+sensor start, causing a Stop/Start cycle that resets the profile to the
+hardware default (1280×720@30).
+
+The JSON file is read once before any sensor is started, so the profile is
+applied on the one and only hardware start — no Stop/Start cycle, no
+fallback.
+
+Default config file: share/realsense_yolov8_nitros_bridge/config/realsense_640x480x60.json
+Override at launch time:
+    json_file_path:=/absolute/path/to/your.json
+
+─── QoS compatibility with NITROS ───────────────────────────────────────────
+
+The NITROS ResizeNode subscriber uses RELIABLE reliability.
+realsense-ros defaults to SENSOR_DATA (BEST_EFFORT), which is incompatible.
+The JSON config sets color_qos to "DEFAULT" (RELIABLE + VOLATILE), which:
+  • matches the NITROS subscriber QoS, allowing the connection to form
+  • satisfies the VOLATILE durability requirement for rclcpp IPC
 
 ─── Topic layout ────────────────────────────────────────────────────────────
 
-The published topic path depends on how the realsense node is loaded:
-
-  Via rs_launch.py (plain Node, camera_namespace='camera', camera_name='camera'):
-    FQN = /camera/camera  →  /camera/camera/color/image_raw   (docs default)
-
-  Via isaac_ros_realsense ComposableNode (namespace='', name='camera'):
-    The component loader injects __ns:='' which overrides the hardcoded
-    "/camera" absolute namespace in RealSenseNodeFactory's constructor,
-    leaving the node in the root namespace with only its name "camera".
-    Effective FQN = /camera  →  /camera/color/image_raw       (actual behaviour)
-
-This file matches the isaac_ros_realsense / ComposableNode behaviour,
-which is what ros-humble-isaac-ros-realsense (installed in the Dockerfile)
-produces.  If you are instead running a standalone rs_launch.py with its
-default camera_namespace='camera', change the two REALSENSE_*_TOPIC
-constants to the /camera/camera/... variants.
+ComposableNode(namespace='', name='camera') leaves FQN=/camera, so topics
+are at /camera/color/image_raw (not /camera/camera/color/image_raw).
+Change REALSENSE_*_TOPIC below if using standalone rs_launch.py instead.
 
 ─── Usage ───────────────────────────────────────────────────────────────────
 
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \\
-      engine_file_path:=/path/to/yolov8n.plan \\
+      engine_file_path:=/path/to/model.plan \\
+      [json_file_path:=/path/to/realsense.json] \\
       [input_image_width:=640] [input_image_height:=480] \\
       [confidence_threshold:=0.25] [nms_threshold:=0.45]
 """
-
-"""
-─── Profile string fix ──────────────────────────────────────────────────────
-
-The previous version passed the color profile as a Python list:
-    'rgb_camera.color_profile': [input_w, 'x', input_h, 'x', color_fps]
-
-launch_ros serialises a list parameter value into a YAML-array string such as
-"[640, x, 480, x, 60]".  The realsense-ros profile parser uses the regex:
-
-    \\s*([0-9]+)\\s*[xX,]\\s*([0-9]+)\\s*[xX,]\\s*([0-9]+)\\s*
-
-which requires a plain "WxHxFPS" (or "W,H,FPS") string with no brackets.
-The bracketed form does not match, the regex silently fails, and the node
-falls back to its hardware default — 30 fps for 1280×720 on the D435I.
-
-The fix uses OpaqueFunction so that LaunchConfigurations are fully resolved
-to strings at launch time before being concatenated into "WxHxFPS".
-
-─── USB watchdog errors ─────────────────────────────────────────────────────
-
-The log also shows repeating:
-    uvc streamer watchdog triggered on endpoint: 132
-    failed to submit UVC request, error: -13
-
-These are a separate, physical-layer issue unrelated to the FPS bug.
-Common causes on Jetson / ThinkPad:
-  • USB-C DP-alt mode sharing bandwidth with the camera on the same controller
-  • The camera is connected through a hub that does not supply enough current
-  • USB autosuspend is enabled — disable with:
-        echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
-  • The Docker container is not passed the correct USB device — ensure
-        --device=/dev/bus/usb and --privileged (or specific udev rules)
-        are present in the docker run command
-
-─── Usage ───────────────────────────────────────────────────────────────────
-
-  ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \\
-      engine_file_path:=/path/to/yolov8n.plan \\
-      [input_image_width:=1280] [input_image_height:=720] [color_fps:=60] \\
-      [confidence_threshold:=0.25] [nms_threshold:=0.45]
-"""
-
-
-"""
-ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan [input_image_width:=640] [input_image_height:=480] [confidence_threshold:=0.25] [nms_threshold:=0.45]
-
-"""
-"""
-ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan
-
-"""
-
-
 
 import json
 import os
@@ -111,17 +71,15 @@ import launch
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes
+from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
-# ComposableNode(namespace='') causes the component loader to inject __ns:=''
-# which overrides the hardcoded "/camera" absolute namespace inside
-# RealSenseNodeFactory, leaving FQN=/camera and topics at /camera/color/...
 REALSENSE_COLOR_TOPIC = '/color/image_raw'
 REALSENSE_INFO_TOPIC  = '/color/camera_info'
 
+# ── Defaults that mirror the shipped JSON config ──────────────────────────────
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
 DEFAULT_INPUT_FPS = '60'
@@ -131,14 +89,21 @@ def generate_launch_description():
 
     # ── Launch arguments ──────────────────────────────────────────────────────
     launch_args = [
+        DeclareLaunchArgument(
+            'json_file_path',
+            default_value=os.path.join(
+                get_package_share_directory('realsense_yolov8_nitros_bridge'),
+                'config', 'realsense_640x480x60.json'),
+            description=(
+                'Absolute path to a realsense-ros JSON parameter file. '
+                'Stream profile, format, and QoS settings should all live '
+                'here so they are applied before the first sensor start.')),
         DeclareLaunchArgument('serial_no', default_value='',
                               description='Select D435i by serial number (empty = any)'),
         DeclareLaunchArgument('input_image_width',  default_value=DEFAULT_INPUT_W,
-                              description='Color stream width'),
+                              description='Must match rgb_camera.color_profile width in the JSON'),
         DeclareLaunchArgument('input_image_height', default_value=DEFAULT_INPUT_H,
-                              description='Color stream height'),
-        DeclareLaunchArgument('color_fps', default_value=DEFAULT_INPUT_FPS,
-                              description='Color stream FPS'),
+                              description='Must match rgb_camera.color_profile height in the JSON'),
         DeclareLaunchArgument('network_image_width',  default_value='640'),
         DeclareLaunchArgument('network_image_height', default_value='640'),
         DeclareLaunchArgument('image_mean',    default_value='[0.0, 0.0, 0.0]'),
@@ -149,7 +114,7 @@ def generate_launch_description():
         DeclareLaunchArgument('input_tensor_names',  default_value='["input_tensor"]'),
         DeclareLaunchArgument('input_binding_names', default_value='["images"]'),
         DeclareLaunchArgument('output_tensor_names', default_value='["output_tensor"]'),
-        DeclareLaunchArgument('output_binding_names',default_value='["output0"]'),
+        DeclareLaunchArgument('output_binding_names', default_value='["output0"]'),
         DeclareLaunchArgument('verbose',             default_value='False'),
         DeclareLaunchArgument('force_engine_update', default_value='False'),
         DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
@@ -157,31 +122,19 @@ def generate_launch_description():
     ]
 
     def create_nodes(context):
-        """
-        OpaqueFunction so all LaunchConfigurations are fully resolved to plain
-        Python strings before we use them.  This is required for the profile
-        string: passing a list or a Substitution object to a string ROS parameter
-        produces a YAML-array representation ("[640, x, 480, x, 60]") that does
-        NOT match the realsense-ros regex parser, causing a silent fallback to
-        the hardware default FPS.
-        """
-        # Resolve every argument to a concrete string
-        serial_no  = LaunchConfiguration('serial_no').perform(context)
-        input_w    = LaunchConfiguration('input_image_width').perform(context)
-        input_h    = LaunchConfiguration('input_image_height').perform(context)
-        color_fps  = LaunchConfiguration('color_fps').perform(context)
-        network_w  = LaunchConfiguration('network_image_width').perform(context)
-        network_h  = LaunchConfiguration('network_image_height').perform(context)
-        image_mean   = LaunchConfiguration('image_mean').perform(context)
-        image_stddev = LaunchConfiguration('image_stddev').perform(context)
-        encoding     = LaunchConfiguration('input_encoding').perform(context)
+        # Resolve all launch arguments to plain Python strings/values.
+        json_file_path = LaunchConfiguration('json_file_path').perform(context)
+        serial_no      = LaunchConfiguration('serial_no').perform(context)
+        input_w        = LaunchConfiguration('input_image_width').perform(context)
+        input_h        = LaunchConfiguration('input_image_height').perform(context)
+        network_w      = LaunchConfiguration('network_image_width').perform(context)
+        network_h      = LaunchConfiguration('network_image_height').perform(context)
+        image_mean     = LaunchConfiguration('image_mean').perform(context)
+        image_stddev   = LaunchConfiguration('image_stddev').perform(context)
+        encoding       = LaunchConfiguration('input_encoding').perform(context)
 
         model_file_path      = LaunchConfiguration('model_file_path').perform(context)
         engine_file_path     = LaunchConfiguration('engine_file_path').perform(context)
-        # These four parameters are declared as string_array on TensorRTNode.
-        # After perform() they are strings like '["input_tensor"]'.
-        # json.loads() converts them to Python lists, which launch_ros then
-        # serialises as a ROS string_array — the type the node expects.
         input_tensor_names   = json.loads(LaunchConfiguration('input_tensor_names').perform(context))
         input_binding_names  = json.loads(LaunchConfiguration('input_binding_names').perform(context))
         output_tensor_names  = json.loads(LaunchConfiguration('output_tensor_names').perform(context))
@@ -191,41 +144,44 @@ def generate_launch_description():
         confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
         nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
 
-        # Build the profile string the way realsense-ros expects it:
-        #   "<width>x<height>x<fps>"
-        # The regex in profile_manager.cpp is:
-        #   \s*([0-9]+)\s*[xX,]\s*([0-9]+)\s*[xX,]\s*([0-9]+)\s*
-        # Any other format (including Python list serialisation) silently falls
-        # back to the hardware default FPS.
-        color_profile_str = f'{input_w}x{input_h}x{color_fps}'
-        print(f'[DEBUG] color_profile_str = {color_profile_str!r}')
+        # ── Validate JSON file ────────────────────────────────────────────────
+        if not os.path.isfile(json_file_path):
+            raise FileNotFoundError(
+                f'[isaac_ros_yolov8_realsense] JSON config not found: {json_file_path}\n'
+                f'  Install the package (colcon build) so the config is copied to share/,\n'
+                f'  or pass json_file_path:=/absolute/path/to/config.json at launch.')
+
+        print(f'[isaac_ros_yolov8_realsense] Using realsense JSON config: {json_file_path}')
+        print(f'[isaac_ros_yolov8_realsense] Encoder input: {input_w}x{input_h}'
+              f'  →  network: {network_w}x{network_h}')
 
         # ── RealSense composable node ─────────────────────────────────────────
+        #
+        # IMPORTANT: stream parameters (profile, format, QoS) live in the JSON
+        # file, NOT in the parameters dict below.
+        #
+        # Why: realsense-ros calls getParameters() inside the node constructor,
+        # before the ROS parameter server has applied the ComposableNode
+        # parameter dict.  Any stream parameter set here arrives late, triggers
+        # a "re-enable stream for change to take effect" warning, causes a
+        # Stop/Start cycle, and the profile reverts to the hardware default.
+        #
+        # The JSON path IS read during getParameters() so it wins the race.
+        # Only serial_no is safe to pass here because it is used for device
+        # selection before getParameters() runs.
         realsense_node = ComposableNode(
             package='realsense2_camera',
             plugin='realsense2_camera::RealSenseNodeFactory',
             name='camera',
             namespace='',
             parameters=[{
-                'serial_no':                serial_no,
-                'enable_color':             True,
-                'enable_depth':             False,
-                'enable_infra1':            False,
-                'enable_infra2':            False,
-                'enable_gyro':              False,
-                'enable_accel':             False,
-                'rgb_camera.color_profile': color_profile_str,   # '640x480x60'
-                'rgb_camera.color_format':  'RGB8',
-                # Remove 'DEFAULT' — it triggers a QoS-driven Stop/Start that
-                # clobbers the profile. SENSOR_DATA is the driver's own default.
-                'color_qos':                'SENSOR_DATA',
-                # Force a full hardware reset before init so parameters are
-                # applied on the one and only sensor start
-                'initial_reset':            True,
+                'serial_no':      serial_no,
+                'json_file_path': json_file_path,
             }],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
 
+        # ── TensorRT inference node ───────────────────────────────────────────
         tensor_rt_node = ComposableNode(
             name='tensor_rt',
             package='isaac_ros_tensor_rt',
@@ -242,6 +198,7 @@ def generate_launch_description():
             }],
         )
 
+        # ── YOLOv8 decoder node ───────────────────────────────────────────────
         yolov8_decoder_node = ComposableNode(
             name='yolov8_decoder_node',
             package='isaac_ros_yolov8',
@@ -267,7 +224,7 @@ def generate_launch_description():
             arguments=['--ros-args', '--log-level', 'INFO'],
         )
 
-        # ── DNN Image Encoder ─────────────────────────────────────────────────
+        # ── DNN Image Encoder (loaded into the shared container) ──────────────
         encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
         yolov8_encoder_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

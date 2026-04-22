@@ -1,0 +1,14 @@
+{
+    "parameters": {
+        "enable_color":              true,
+        "enable_depth":              false,
+        "enable_infra1":             false,
+        "enable_infra2":             false,
+        "enable_gyro":               false,
+        "enable_accel":              false,
+        "rgb_camera.color_profile":  "640x480x60",
+        "rgb_camera.color_format":   "RGB8",
+        "color_qos":                 "DEFAULT",
+        "initial_reset":             true
+    }
+}
