@@ -91,6 +91,13 @@ Common causes on Jetson / ThinkPad:
       [confidence_threshold:=0.25] [nms_threshold:=0.45]
 """
 
+
+"""
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan [input_image_width:=640] [input_image_height:=480] [confidence_threshold:=0.25] [nms_threshold:=0.45]
+
+"""
+
+
 import json
 import os
 
@@ -107,8 +114,8 @@ from launch_ros.descriptions import ComposableNode
 # ComposableNode(namespace='') causes the component loader to inject __ns:=''
 # which overrides the hardcoded "/camera" absolute namespace inside
 # RealSenseNodeFactory, leaving FQN=/camera and topics at /camera/color/...
-REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/color/camera_info'
 
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
