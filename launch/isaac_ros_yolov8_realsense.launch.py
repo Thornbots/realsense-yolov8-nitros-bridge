@@ -180,15 +180,9 @@ def generate_launch_description():
             plugin='realsense2_camera::RealSenseNodeFactory',
             name='camera',
             namespace='',
-            parameters=[{
-                'serial_no':                serial_no,
-                'enable_color':             True,
-                'enable_depth':             False,
-                'rgb_camera.color_profile': f'{input_w}x{input_h}x{DEFAULT_INPUT_FPS}',
-                'rgb_camera.color_format':  'RGB8',
-                'rgb_camera.color_qos':     'DEFAULT', # Reliable + Volatile for NITROS
-                'initial_reset':            True,
-            }],
+            parameters=[
+                    os.path.join(get_package_share_directory('realsense_yolov8_nitros_bridge'), 'config', 'realsense_640x480x60.yaml'),
+                ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
 

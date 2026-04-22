@@ -1,0 +1,20 @@
+# Replaces the default realsense config file with one that is 60fps
+rgb_camera:
+  profile: '640x480x60'
+color_qos: "DEFAULT"
+
+depth_module:
+  profile: '640x480x60'
+  emitter_enabled: 0
+  emitter_on_off: false
+depth_qos: "DEFAULT"
+depth_info_qos: "DEFAULT"
+
+enable_accel: false
+enable_color: true
+enable_depth: true
+enable_gyro: false
+enable_infra1: false
+enable_infra2: false
+
+align_depth.enable: false
