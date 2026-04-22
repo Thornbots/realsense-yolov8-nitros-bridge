@@ -63,6 +63,12 @@ Change REALSENSE_*_TOPIC below if using standalone rs_launch.py instead.
       [confidence_threshold:=0.25] [nms_threshold:=0.45]
 """
 
+"""
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan
+"""
+
+
+
 import json
 import os
 
@@ -76,8 +82,8 @@ from launch_ros.descriptions import ComposableNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
-REALSENSE_COLOR_TOPIC = '/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
 
 # ── Defaults that mirror the shipped JSON config ──────────────────────────────
 DEFAULT_INPUT_W   = '640'
@@ -175,8 +181,13 @@ def generate_launch_description():
             name='camera',
             namespace='',
             parameters=[{
-                'serial_no':      serial_no,
-                'json_file_path': json_file_path,
+                'serial_no':                serial_no,
+                'enable_color':             True,
+                'enable_depth':             False,
+                'rgb_camera.color_profile': f'{input_w}x{input_h}x{DEFAULT_INPUT_FPS}',
+                'rgb_camera.color_format':  'RGB8',
+                'rgb_camera.color_qos':     'DEFAULT', # Reliable + Volatile for NITROS
+                'initial_reset':            True,
             }],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
