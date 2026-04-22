@@ -49,6 +49,49 @@ constants to the /camera/camera/... variants.
       [confidence_threshold:=0.25] [nms_threshold:=0.45]
 """
 
+"""
+─── Profile string fix ──────────────────────────────────────────────────────
+
+The previous version passed the color profile as a Python list:
+    'rgb_camera.color_profile': [input_w, 'x', input_h, 'x', color_fps]
+
+launch_ros serialises a list parameter value into a YAML-array string such as
+"[640, x, 480, x, 60]".  The realsense-ros profile parser uses the regex:
+
+    \\s*([0-9]+)\\s*[xX,]\\s*([0-9]+)\\s*[xX,]\\s*([0-9]+)\\s*
+
+which requires a plain "WxHxFPS" (or "W,H,FPS") string with no brackets.
+The bracketed form does not match, the regex silently fails, and the node
+falls back to its hardware default — 30 fps for 1280×720 on the D435I.
+
+The fix uses OpaqueFunction so that LaunchConfigurations are fully resolved
+to strings at launch time before being concatenated into "WxHxFPS".
+
+─── USB watchdog errors ─────────────────────────────────────────────────────
+
+The log also shows repeating:
+    uvc streamer watchdog triggered on endpoint: 132
+    failed to submit UVC request, error: -13
+
+These are a separate, physical-layer issue unrelated to the FPS bug.
+Common causes on Jetson / ThinkPad:
+  • USB-C DP-alt mode sharing bandwidth with the camera on the same controller
+  • The camera is connected through a hub that does not supply enough current
+  • USB autosuspend is enabled — disable with:
+        echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
+  • The Docker container is not passed the correct USB device — ensure
+        --device=/dev/bus/usb and --privileged (or specific udev rules)
+        are present in the docker run command
+
+─── Usage ───────────────────────────────────────────────────────────────────
+
+  ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \\
+      engine_file_path:=/path/to/yolov8n.plan \\
+      [input_image_width:=1280] [input_image_height:=720] [color_fps:=60] \\
+      [confidence_threshold:=0.25] [nms_threshold:=0.45]
+"""
+
+import json
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -64,8 +107,8 @@ from launch_ros.descriptions import ComposableNode
 # ComposableNode(namespace='') causes the component loader to inject __ns:=''
 # which overrides the hardcoded "/camera" absolute namespace inside
 # RealSenseNodeFactory, leaving FQN=/camera and topics at /camera/color/...
-REALSENSE_COLOR_TOPIC = '/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/color/camera_info'
+REALSENSE_COLOR_TOPIC = '/camera/color/image_raw'
+REALSENSE_INFO_TOPIC  = '/camera/color/camera_info'
 
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
@@ -123,14 +166,18 @@ def generate_launch_description():
 
         model_file_path      = LaunchConfiguration('model_file_path').perform(context)
         engine_file_path     = LaunchConfiguration('engine_file_path').perform(context)
-        input_tensor_names   = LaunchConfiguration('input_tensor_names').perform(context)
-        input_binding_names  = LaunchConfiguration('input_binding_names').perform(context)
-        output_tensor_names  = LaunchConfiguration('output_tensor_names').perform(context)
-        output_binding_names = LaunchConfiguration('output_binding_names').perform(context)
-        verbose              = LaunchConfiguration('verbose').perform(context)
-        force_engine_update  = LaunchConfiguration('force_engine_update').perform(context)
-        confidence_threshold = LaunchConfiguration('confidence_threshold').perform(context)
-        nms_threshold        = LaunchConfiguration('nms_threshold').perform(context)
+        # These four parameters are declared as string_array on TensorRTNode.
+        # After perform() they are strings like '["input_tensor"]'.
+        # json.loads() converts them to Python lists, which launch_ros then
+        # serialises as a ROS string_array — the type the node expects.
+        input_tensor_names   = json.loads(LaunchConfiguration('input_tensor_names').perform(context))
+        input_binding_names  = json.loads(LaunchConfiguration('input_binding_names').perform(context))
+        output_tensor_names  = json.loads(LaunchConfiguration('output_tensor_names').perform(context))
+        output_binding_names = json.loads(LaunchConfiguration('output_binding_names').perform(context))
+        verbose              = LaunchConfiguration('verbose').perform(context) == 'True'
+        force_engine_update  = LaunchConfiguration('force_engine_update').perform(context) == 'True'
+        confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
+        nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
 
         # Build the profile string the way realsense-ros expects it:
         #   "<width>x<height>x<fps>"
@@ -175,8 +222,8 @@ def generate_launch_description():
                 'output_tensor_names':  output_tensor_names,
                 'input_tensor_names':   input_tensor_names,
                 'input_binding_names':  input_binding_names,
-                'verbose':              verbose == 'True',
-                'force_engine_update':  force_engine_update == 'True',
+                'verbose':              verbose,
+                'force_engine_update':  force_engine_update,
             }],
         )
 
@@ -185,8 +232,8 @@ def generate_launch_description():
             package='isaac_ros_yolov8',
             plugin='nvidia::isaac_ros::yolov8::YoloV8DecoderNode',
             parameters=[{
-                'confidence_threshold': float(confidence_threshold),
-                'nms_threshold':        float(nms_threshold),
+                'confidence_threshold': confidence_threshold,
+                'nms_threshold':        nms_threshold,
             }],
         )
 
