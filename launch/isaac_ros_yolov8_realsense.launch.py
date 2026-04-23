@@ -185,19 +185,21 @@ def generate_launch_description():
                 ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
-        roi_depth = ComposableNode(
-        package="roi_depth_query",
-        executable="roi_depth_node",
-        name="roi_depth_node",
-        output="screen",
-        parameters=[{
-            "depth_ns":        "/camera/depth",
-            "color_ns":        "/camera/color",
-            "extrinsics_topic": "/camera/camera/extrinsics/depth_to_color",
-            "depth_scale":     0.001,   # D435i Z16 default (,, to m)
-            "min_depth_m":     0.1,
-            "max_depth_m":     10.0,
-        }],
+        
+        
+        roi_depth_node = ComposableNode(
+            package="roi_depth_query",
+            executable="roi_depth_node",
+            name="roi_depth_node",
+            output="screen",
+            parameters=[{
+                "depth_ns":        "/camera/depth",
+                "color_ns":        "/camera/color",
+                "extrinsics_topic": "/camera/camera/extrinsics/depth_to_color",
+                "depth_scale":     0.001,   # D435i Z16 default (,, to m)
+                "min_depth_m":     0.1,
+                "max_depth_m":     10.0,
+            }],
         )
 
         # ── TensorRT inference node ───────────────────────────────────────────
@@ -238,6 +240,7 @@ def generate_launch_description():
                 realsense_node,
                 tensor_rt_node,
                 yolov8_decoder_node,
+                roi_depth_node
             ],
             output='screen',
             arguments=['--ros-args', '--log-level', 'INFO'],
