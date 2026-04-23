@@ -39,6 +39,10 @@
   <!-- realsense2_camera is the upstream producer -->
   <exec_depend>realsense2_camera</exec_depend>
 
+  <!-- needs this package to process depth -->
+  <exec_depend>roi_depth_query</exec_depend>
+
+
   <!-- ── CUDA is a system dependency; listed here for documentation.
          CMakeLists finds it via find_package(CUDA) / find_package(CUDAToolkit). -->
 
