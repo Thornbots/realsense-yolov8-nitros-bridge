@@ -189,7 +189,7 @@ def generate_launch_description():
         
         roi_depth_node = ComposableNode(
             package="roi_depth_query",
-            executable="roi_depth_node",
+            plugin="roi_depth_query::RoiDepthNode",
             name="roi_depth_node",
             output="screen",
             parameters=[{
@@ -200,6 +200,7 @@ def generate_launch_description():
                 "min_depth_m":     0.1,
                 "max_depth_m":     10.0,
             }],
+            extra_arguments=[{"use_intra_process_comms": True}],
         )
 
         # ── TensorRT inference node ───────────────────────────────────────────
