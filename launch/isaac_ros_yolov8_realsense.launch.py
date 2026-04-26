@@ -191,7 +191,6 @@ def generate_launch_description():
             package="roi_depth_query",
             plugin="roi_depth_query::RoiDepthNode",
             name="roi_depth_node",
-            output="screen",
             parameters=[{
                 "depth_ns":        "/camera/depth",
                 "color_ns":        "/camera/color",
