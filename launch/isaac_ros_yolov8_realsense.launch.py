@@ -79,6 +79,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
+from launch_ros.actions import Node as LaunchNode   # add to imports at top
+
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
@@ -267,9 +269,21 @@ def generate_launch_description():
                 'component_container_name':             'yolov8_realsense_container',
                 'dnn_image_encoder_namespace':          'yolov8_encoder',
             }.items(),
-
         )
 
-        return [container, yolov8_encoder_launch]
+        extrinsics_relay = LaunchNode(
+            package='roi_depth_query',
+            executable='extrinsics_relay_node',
+            name='extrinsics_relay',
+            parameters=[{
+                'extrinsics_topic': '/camera/camera/extrinsics/depth_to_color',
+                'target_node':      '/roi_depth_node',
+            }],
+            output='screen',
+        )
+        
+        return [container, yolov8_encoder_launch, extrinsics_relay]
+
+    
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
