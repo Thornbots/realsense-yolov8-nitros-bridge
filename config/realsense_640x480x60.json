@@ -1,7 +1,7 @@
 {
     "parameters": {
         "enable_color":              true,
-        "enable_depth":              false,
+        "enable_depth":              true,
         "enable_infra1":             false,
         "enable_infra2":             false,
         "enable_gyro":               false,
@@ -10,6 +10,7 @@
         "rgb_camera.color_format":   "RGB8",
         "color_qos":                 "DEFAULT",
         "initial_reset":             true,
-        "publish_tf":                true
+        "publish_tf":                true,
+        "align_depth":               false
     }
 }
