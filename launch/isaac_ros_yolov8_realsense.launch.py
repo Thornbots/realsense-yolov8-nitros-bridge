@@ -71,11 +71,11 @@ from launch_ros.actions import Node as LaunchNode
 #   /camera/color/image_raw, /camera/depth/image_rect_raw, etc.
 # The extrinsics topic retains realsense-ros's internal 'camera' sub-namespace:
 #   /camera/camera/extrinsics/depth_to_color
-REALSENSE_COLOR_TOPIC    = '/camera/color/image_raw'
-REALSENSE_INFO_TOPIC     = '/camera/color/camera_info'
-REALSENSE_DEPTH_NS       = '/camera/depth'
-REALSENSE_COLOR_NS       = '/camera/color'
-REALSENSE_EXTRINSICS_TOPIC = '/camera/camera/extrinsics/depth_to_color'
+REALSENSE_COLOR_TOPIC    = '/color/image_raw'
+REALSENSE_INFO_TOPIC     = '/color/camera_info'
+REALSENSE_DEPTH_NS       = '/depth'
+REALSENSE_COLOR_NS       = '/color'
+REALSENSE_EXTRINSICS_TOPIC = '/extrinsics/depth_to_color'
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_INPUT_W   = '640'
