@@ -11,6 +11,7 @@
         "color_qos":                 "DEFAULT",
         "depth_qos":                 "DEFAULT",
         "depth_info_qos":            "DEFAULT",
+        "depth_module.profile":      "640x480x60",
         "align_depth.enable":        false,
         "publish_tf":                true,
         "initial_reset":             true
