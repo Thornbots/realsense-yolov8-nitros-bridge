@@ -18,56 +18,40 @@
 """
 isaac_ros_yolov8_realsense.launch.py
 
-Starts a D435i (or any D4xx) and connects it to the isaac_ros YOLOv8
-TensorRT pipeline.  All nodes share a single component_container_mt so
-that ROS 2 intra-process communication (IPC) is available between them.
+Starts a D435i and connects it to the isaac_ros YOLOv8 TensorRT pipeline,
+then feeds the best detection into the ROI depth node via a relay node.
 
-─── Camera configuration via JSON ───────────────────────────────────────────
+── Topic layout ──────────────────────────────────────────────────────────────
 
-Camera stream parameters (resolution, FPS, format, QoS) are loaded from a
-JSON file rather than passed as individual ROS parameters.  This matters
-because realsense-ros reads stream parameters during its internal
-getParameters() call at node construction time.  Parameters arriving
-through the ComposableNode parameter dict may be processed AFTER the first
-sensor start, causing a Stop/Start cycle that resets the profile to the
-hardware default (1280×720@30).
+  Camera (name=camera, namespace=''):
+    /camera/color/image_raw          → dnn_image_encoder
+    /camera/color/camera_info        → roi_depth_node (LUT build)
+    /camera/depth/image_rect_raw     → roi_depth_node (sampling)
+    /camera/depth/camera_info        → roi_depth_node (LUT build)
+    /camera/camera/extrinsics/...    → extrinsics_relay_node → roi_depth_node params
 
-The JSON file is read once before any sensor is started, so the profile is
-applied on the one and only hardware start — no Stop/Start cycle, no
-fallback.
+  Inference chain:
+    /tensor_pub       (dnn_image_encoder → tensor_rt)
+    /tensor_sub       (tensor_rt → yolov8_decoder_node)
+    /detections_output  (yolov8_decoder_node → detection_picker_node)
+      ↳ Detection2DArray in 640×640 NETWORK space
 
-Default config file: share/realsense_yolov8_nitros_bridge/config/realsense_640x480x60.json
-Override at launch time:
-    json_file_path:=/absolute/path/to/your.json
+  Relay node (detection_picker_node):
+    /detections_output → /roi
+      ↳ Picks highest-confidence detection, scales bbox to color image space
 
-─── QoS compatibility with NITROS ───────────────────────────────────────────
+  ROI depth node:
+    /roi + /camera/depth/image_rect_raw → /roi_depth_m (mean depth in metres)
 
-The NITROS ResizeNode subscriber uses RELIABLE reliability.
-realsense-ros defaults to SENSOR_DATA (BEST_EFFORT), which is incompatible.
-The JSON config sets color_qos to "DEFAULT" (RELIABLE + VOLATILE), which:
-  • matches the NITROS subscriber QoS, allowing the connection to form
-  • satisfies the VOLATILE durability requirement for rclcpp IPC
-
-─── Topic layout ────────────────────────────────────────────────────────────
-
-ComposableNode(namespace='', name='camera') leaves FQN=/camera, so topics
-are at /camera/color/image_raw (not /camera/camera/color/image_raw).
-Change REALSENSE_*_TOPIC below if using standalone rs_launch.py instead.
-
-─── Usage ───────────────────────────────────────────────────────────────────
+── Usage ─────────────────────────────────────────────────────────────────────
 
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \\
       engine_file_path:=/path/to/model.plan \\
       [json_file_path:=/path/to/realsense.json] \\
       [input_image_width:=640] [input_image_height:=480] \\
-      [confidence_threshold:=0.25] [nms_threshold:=0.45]
+      [confidence_threshold:=0.25] [nms_threshold:=0.45] \\
+      [center_sample_fraction:=0.25]
 """
-
-"""
-ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan
-"""
-
-
 
 import json
 import os
@@ -79,41 +63,46 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
-from launch_ros.actions import Node as LaunchNode   # add to imports at top
-
+from launch_ros.actions import Node as LaunchNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
-REALSENSE_COLOR_TOPIC = '/color/image_raw'
-REALSENSE_INFO_TOPIC  = '/color/camera_info'
+# With ComposableNode(name='camera', namespace=''), realsense-ros publishes:
+#   /camera/color/image_raw, /camera/depth/image_rect_raw, etc.
+# The extrinsics topic retains realsense-ros's internal 'camera' sub-namespace:
+#   /camera/camera/extrinsics/depth_to_color
+REALSENSE_COLOR_TOPIC    = '/camera/color/image_raw'
+REALSENSE_INFO_TOPIC     = '/camera/color/camera_info'
+REALSENSE_DEPTH_NS       = '/camera/depth'
+REALSENSE_COLOR_NS       = '/camera/color'
+REALSENSE_EXTRINSICS_TOPIC = '/camera/camera/extrinsics/depth_to_color'
 
-# ── Defaults that mirror the shipped JSON config ──────────────────────────────
+# ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
-DEFAULT_INPUT_FPS = '60'
+DEFAULT_NETWORK_W = '640'
+DEFAULT_NETWORK_H = '640'
 
 
 def generate_launch_description():
 
-    # ── Launch arguments ──────────────────────────────────────────────────────
     launch_args = [
         DeclareLaunchArgument(
             'json_file_path',
             default_value=os.path.join(
                 get_package_share_directory('realsense_yolov8_nitros_bridge'),
                 'config', 'realsense_640x480x60.json'),
-            description=(
-                'Absolute path to a realsense-ros JSON parameter file. '
-                'Stream profile, format, and QoS settings should all live '
-                'here so they are applied before the first sensor start.')),
+            description='Absolute path to realsense-ros JSON config (profile, format, QoS)'),
         DeclareLaunchArgument('serial_no', default_value='',
-                              description='Select D435i by serial number (empty = any)'),
+                              description='Select camera by serial number (empty = any)'),
         DeclareLaunchArgument('input_image_width',  default_value=DEFAULT_INPUT_W,
-                              description='Must match rgb_camera.color_profile width in the JSON'),
+                              description='Color image width (must match JSON profile)'),
         DeclareLaunchArgument('input_image_height', default_value=DEFAULT_INPUT_H,
-                              description='Must match rgb_camera.color_profile height in the JSON'),
-        DeclareLaunchArgument('network_image_width',  default_value='640'),
-        DeclareLaunchArgument('network_image_height', default_value='640'),
+                              description='Color image height (must match JSON profile)'),
+        DeclareLaunchArgument('network_image_width',  default_value=DEFAULT_NETWORK_W,
+                              description='TensorRT model input width'),
+        DeclareLaunchArgument('network_image_height', default_value=DEFAULT_NETWORK_H,
+                              description='TensorRT model input height'),
         DeclareLaunchArgument('image_mean',    default_value='[0.0, 0.0, 0.0]'),
         DeclareLaunchArgument('image_stddev',  default_value='[1.0, 1.0, 1.0]'),
         DeclareLaunchArgument('input_encoding', default_value='rgb8'),
@@ -127,19 +116,22 @@ def generate_launch_description():
         DeclareLaunchArgument('force_engine_update', default_value='False'),
         DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
         DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
+        # Depth sampling: fraction of bbox center to average (0.25 = inner 25% per axis)
+        DeclareLaunchArgument('center_sample_fraction', default_value='0.25',
+                              description='Fraction of bbox center to sample for depth (0.05–1.0)'),
+        DeclareLaunchArgument('min_detection_score', default_value='0.0',
+                              description='Relay node ignores detections below this confidence'),
     ]
 
     def create_nodes(context):
-        # Resolve all launch arguments to plain Python strings/values.
-        json_file_path = LaunchConfiguration('json_file_path').perform(context)
-        serial_no      = LaunchConfiguration('serial_no').perform(context)
-        input_w        = LaunchConfiguration('input_image_width').perform(context)
-        input_h        = LaunchConfiguration('input_image_height').perform(context)
-        network_w      = LaunchConfiguration('network_image_width').perform(context)
-        network_h      = LaunchConfiguration('network_image_height').perform(context)
-        image_mean     = LaunchConfiguration('image_mean').perform(context)
-        image_stddev   = LaunchConfiguration('image_stddev').perform(context)
-        encoding       = LaunchConfiguration('input_encoding').perform(context)
+        json_file_path  = LaunchConfiguration('json_file_path').perform(context)
+        input_w         = LaunchConfiguration('input_image_width').perform(context)
+        input_h         = LaunchConfiguration('input_image_height').perform(context)
+        network_w       = LaunchConfiguration('network_image_width').perform(context)
+        network_h       = LaunchConfiguration('network_image_height').perform(context)
+        image_mean      = LaunchConfiguration('image_mean').perform(context)
+        image_stddev    = LaunchConfiguration('image_stddev').perform(context)
+        encoding        = LaunchConfiguration('input_encoding').perform(context)
 
         model_file_path      = LaunchConfiguration('model_file_path').perform(context)
         engine_file_path     = LaunchConfiguration('engine_file_path').perform(context)
@@ -151,57 +143,31 @@ def generate_launch_description():
         force_engine_update  = LaunchConfiguration('force_engine_update').perform(context) == 'True'
         confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
         nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
+        center_sample_frac   = float(LaunchConfiguration('center_sample_fraction').perform(context))
+        min_det_score        = float(LaunchConfiguration('min_detection_score').perform(context))
 
-        # ── Validate JSON file ────────────────────────────────────────────────
         if not os.path.isfile(json_file_path):
             raise FileNotFoundError(
-                f'[isaac_ros_yolov8_realsense] JSON config not found: {json_file_path}\n'
-                f'  Install the package (colcon build) so the config is copied to share/,\n'
-                f'  or pass json_file_path:=/absolute/path/to/config.json at launch.')
+                f'[isaac_ros_yolov8_realsense] JSON config not found: {json_file_path}')
 
-        print(f'[isaac_ros_yolov8_realsense] Using realsense JSON config: {json_file_path}')
-        print(f'[isaac_ros_yolov8_realsense] Encoder input: {input_w}x{input_h}'
-              f'  →  network: {network_w}x{network_h}')
+        print(f'[isaac_ros_yolov8_realsense] JSON config: {json_file_path}')
+        print(f'[isaac_ros_yolov8_realsense] Color: {input_w}x{input_h} → network: {network_w}x{network_h}')
+        print(f'[isaac_ros_yolov8_realsense] Depth center_sample_fraction: {center_sample_frac}')
 
         # ── RealSense composable node ─────────────────────────────────────────
-        #
-        # IMPORTANT: stream parameters (profile, format, QoS) live in the JSON
-        # file, NOT in the parameters dict below.
-        #
-        # Why: realsense-ros calls getParameters() inside the node constructor,
-        # before the ROS parameter server has applied the ComposableNode
-        # parameter dict.  Any stream parameter set here arrives late, triggers
-        # a "re-enable stream for change to take effect" warning, causes a
-        # Stop/Start cycle, and the profile reverts to the hardware default.
-        #
-        # The JSON path IS read during getParameters() so it wins the race.
-        # Only serial_no is safe to pass here because it is used for device
-        # selection before getParameters() runs.
+        # Parameters come from YAML (applied at construction time before sensor start).
+        # JSON path is also read early by realsense-ros, so it wins the race.
         realsense_node = ComposableNode(
             package='realsense2_camera',
             plugin='realsense2_camera::RealSenseNodeFactory',
             name='camera',
             namespace='',
             parameters=[
-                    os.path.join(get_package_share_directory('realsense_yolov8_nitros_bridge'), 'config', 'realsense_640x480x60.yaml'),
-                ],
+                os.path.join(
+                    get_package_share_directory('realsense_yolov8_nitros_bridge'),
+                    'config', 'realsense_640x480x60.yaml'),
+            ],
             extra_arguments=[{'use_intra_process_comms': True}],
-        )
-        
-        
-        roi_depth_node = ComposableNode(
-            package="roi_depth_query",
-            plugin="roi_depth_query::RoiDepthNode",
-            name="roi_depth_node",
-            parameters=[{
-                "depth_ns":        "/camera/depth",
-                "color_ns":        "/camera/color",
-                "extrinsics_topic": "/camera/camera/extrinsics/depth_to_color",
-                "depth_scale":     0.001,   # D435i Z16 default (,, to m)
-                "min_depth_m":     0.1,
-                "max_depth_m":     10.0,
-            }],
-            extra_arguments=[{"use_intra_process_comms": True}],
         )
 
         # ── TensorRT inference node ───────────────────────────────────────────
@@ -222,6 +188,7 @@ def generate_launch_description():
         )
 
         # ── YOLOv8 decoder node ───────────────────────────────────────────────
+        # Publishes: /detections_output (Detection2DArray, network image space)
         yolov8_decoder_node = ComposableNode(
             name='yolov8_decoder_node',
             package='isaac_ros_yolov8',
@@ -230,6 +197,48 @@ def generate_launch_description():
                 'confidence_threshold': confidence_threshold,
                 'nms_threshold':        nms_threshold,
             }],
+        )
+
+        # ── Detection ROI relay node ──────────────────────────────────────────
+        # Subscribes: /detections_output (Detection2DArray, 640×640 network space)
+        # Publishes:  /roi              (Detection2D,      color image space)
+        # Applies scale: x *= color_w/network_w, y *= color_h/network_h
+        detection_picker_node = ComposableNode(
+            package='roi_depth_query',
+            plugin='roi_depth_query::DetectionRoiRelayNode',
+            name='detection_picker_node',
+            parameters=[{
+                'detections_topic': '/detections_output',
+                'roi_topic':        '/roi',
+                'network_width':    int(network_w),
+                'network_height':   int(network_h),
+                'color_width':      int(input_w),
+                'color_height':     int(input_h),
+                'min_score':        min_det_score,
+            }],
+            extra_arguments=[{'use_intra_process_comms': True}],
+        )
+
+        # ── ROI depth node ────────────────────────────────────────────────────
+        # Subscribes: /roi (Detection2D, color image space) + depth streams
+        # Publishes:  /roi_depth_m (mean depth in metres)
+        # NOTE: depth_ns and color_ns must match realsense-ros topic layout.
+        # With name='camera', namespace='', realsense publishes at:
+        #   /camera/depth/image_rect_raw, /camera/color/camera_info, etc.
+        roi_depth_node = ComposableNode(
+            package='roi_depth_query',
+            plugin='roi_depth_query::RoiDepthNode',
+            name='roi_depth_node',
+            parameters=[{
+                'depth_ns':               REALSENSE_DEPTH_NS,
+                'color_ns':               REALSENSE_COLOR_NS,
+                'extrinsics_topic':       REALSENSE_EXTRINSICS_TOPIC,
+                'depth_scale':            0.001,   # D435i Z16 default (mm → m)
+                'min_depth_m':            0.1,
+                'max_depth_m':            10.0,
+                'center_sample_fraction': center_sample_frac,
+            }],
+            extra_arguments=[{'use_intra_process_comms': True}],
         )
 
         # ── Shared component container ────────────────────────────────────────
@@ -242,7 +251,8 @@ def generate_launch_description():
                 realsense_node,
                 tensor_rt_node,
                 yolov8_decoder_node,
-                roi_depth_node
+                detection_picker_node,
+                roi_depth_node,
             ],
             output='screen',
             arguments=['--ros-args', '--log-level', 'INFO'],
@@ -271,19 +281,18 @@ def generate_launch_description():
             }.items(),
         )
 
+        # ── Extrinsics relay (standalone: subscribes transient_local, pushes params) ──
         extrinsics_relay = LaunchNode(
             package='roi_depth_query',
             executable='extrinsics_relay_node',
             name='extrinsics_relay',
             parameters=[{
-                'extrinsics_topic': '/camera/camera/extrinsics/depth_to_color',
+                'extrinsics_topic': REALSENSE_EXTRINSICS_TOPIC,
                 'target_node':      '/roi_depth_node',
             }],
             output='screen',
         )
-        
-        return [container, yolov8_encoder_launch, extrinsics_relay]
 
-    
+        return [container, yolov8_encoder_launch, extrinsics_relay]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])

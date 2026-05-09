@@ -9,8 +9,10 @@
         "rgb_camera.color_profile":  "640x480x60",
         "rgb_camera.color_format":   "RGB8",
         "color_qos":                 "DEFAULT",
-        "initial_reset":             true,
+        "depth_qos":                 "DEFAULT",
+        "depth_info_qos":            "DEFAULT",
+        "align_depth.enable":        false,
         "publish_tf":                true,
-        "align_depth":               false
+        "initial_reset":             true
     }
 }
