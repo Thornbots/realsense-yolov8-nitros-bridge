@@ -1,12 +1,23 @@
-# Replaces the default realsense config file with one that is 60fps
+# realsense_640x480x60.yaml
+#
+# Color at 60 fps (full rate for inference pipeline).
+# Depth at 30 fps — the LUT only needs camera_info once, and the ROI depth
+# node samples on detection events (~inference rate), not every depth frame.
+# Halving depth FPS roughly halves its USB 3.x bandwidth contribution,
+# which prevents the UVC watchdog / "Depth stream start failure" seen when
+# running both streams at 60 fps on bandwidth-constrained USB controllers.
+#
+# If your USB host controller has no issues at 60+60, change depth_module
+# profile back to '640x480x60'.
+
 rgb_camera:
   profile: '640x480x60'
 color_qos: "DEFAULT"
 
 depth_module:
   profile: '640x480x60'
-  emitter_enabled: 0
-  emitter_on_off: false
+  emitter_enabled: 1       # Keep IR emitter ON for structured-light depth accuracy.
+  emitter_on_off: false    # Constant emission (not alternating with IR off frames).
 depth_qos: "DEFAULT"
 depth_info_qos: "DEFAULT"
 
@@ -18,3 +29,4 @@ enable_infra1: false
 enable_infra2: false
 
 align_depth.enable: false
+publish_tf: true
