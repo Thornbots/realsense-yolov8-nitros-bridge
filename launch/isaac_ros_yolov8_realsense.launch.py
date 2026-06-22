@@ -30,14 +30,22 @@ isaac_ros_yolov8_realsense.launch.py
     → detection_picker_node  (picks best, scales bbox to color image space)
     → /roi  (Detection2D, bbox in 640×480 COLOR image space)
     → roi_depth_node  (LUT lookup + center-sample depth)
-emitter_on_off    → /roi_depth_m  (Float32, metres)
+    → /roi_point  (geometry_msgs/PointStamped, REP-103 camera body frame)
+    → point_to_cv_target_node  (dji_serial_bridge package — frame convert +
+                                 finite-difference velocity/acceleration)
+    → /cv_target  (dji_serial_bridge/msg/CVTarget)
+    → dji_serial_bridge_node  → UART → MCB / gimbal controller
+
+  Set enable_serial_bridge:=false to omit the last two nodes (e.g. when
+  bench-testing the vision pipeline without the MCB attached).
 
 ── Usage ─────────────────────────────────────────────────────────────────────
 
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
       engine_file_path:=/path/to/model.plan \
       [confidence_threshold:=0.25] [nms_threshold:=0.45] \
-      [center_sample_fraction:=0.25]
+      [center_sample_fraction:=0.25] \
+      [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200]
 """
 
 import json
@@ -46,6 +54,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 import launch
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
@@ -93,6 +102,20 @@ def generate_launch_description():
             description='Fraction of bbox center to sample for depth (0.05–1.0)'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
             description='Relay node ignores detections below this confidence'),
+        # ── DJI serial bridge ────────────────────────────────────────────────
+        DeclareLaunchArgument('enable_serial_bridge', default_value='True',
+            description='Also launch dji_serial_bridge_node and the '
+                        'point_to_cv_target_node adapter that feeds it'),
+        DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
+            description='Within the serial bridge launch, also launch the '
+                        '/roi_point -> CVTarget adapter (vs. cv_target node only)'),
+        DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
+            description='MCB serial device path'),
+        DeclareLaunchArgument('serial_baudrate', default_value='115200',
+            description='MCB serial baud rate'),
+        DeclareLaunchArgument('estimate_velocity', default_value='True',
+            description='Finite-difference v_x/v_y/v_z/a_x/a_y/a_z for CVTarget '
+                        'from consecutive /roi_point samples'),
     ]
 
     def create_nodes(context):
@@ -197,7 +220,6 @@ def generate_launch_description():
             parameters=[{
                 'depth_ns':               REALSENSE_DEPTH_NS,         # '/depth'
                 'color_ns':               REALSENSE_COLOR_NS,         # '/color'
-                'extrinsics_topic':       REALSENSE_EXTRINSICS_TOPIC, # '/extrinsics/depth_to_color'
                 'depth_scale':            0.001,   # D435i Z16: raw uint16 → metres
                 'min_depth_m':            0.1,
                 'max_depth_m':            10.0,
@@ -261,6 +283,30 @@ def generate_launch_description():
             output='screen',
         )
 
-        return [container, yolov8_encoder_launch, extrinsics_relay]
+        # ── DJI serial bridge ──────────────────────────────────────────────────
+        # Brings up dji_serial_bridge_node (talks to the MCB over UART) plus
+        # point_to_cv_target_node, which converts roi_depth_node's /roi_point
+        # into the CVTarget message the bridge expects. This is the link that
+        # actually gets detections to the gimbal/MCB — without it the vision
+        # pipeline above only ever produces /roi_point with nothing downstream.
+        serial_bridge = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory('dji_serial_bridge'),
+                    'launch', 'dji_bridge.launch.py')
+            ),
+            launch_arguments={
+                'device':                  LaunchConfiguration('serial_device'),
+                'baudrate':                LaunchConfiguration('serial_baudrate'),
+                'enable_cv_target_bridge': LaunchConfiguration('enable_cv_target_bridge'),
+                'roi_point_topic':         '/roi_point',
+                'roi_topic':               '/roi',
+                'cv_target_topic':         '/cv_target',
+                'estimate_velocity':       LaunchConfiguration('estimate_velocity'),
+            }.items(),
+            condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
+        )
+
+        return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])

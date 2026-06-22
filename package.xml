@@ -42,6 +42,8 @@
   <!-- needs this package to process depth -->
   <exec_depend>roi_depth_query</exec_depend>
 
+  <!-- launch file includes dji_bridge.launch.py to wire detections to the MCB -->
+  <exec_depend>dji_serial_bridge</exec_depend>
 
   <!-- ── CUDA is a system dependency; listed here for documentation.
          CMakeLists finds it via find_package(CUDA) / find_package(CUDAToolkit). -->
