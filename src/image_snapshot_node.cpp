@@ -10,6 +10,11 @@
 // from loading. The save() method also checks periodically (every
 // disk_check_interval saves) and cancels the timer if the threshold
 // is crossed while running.
+//
+// NOTE: rclcpp::Subscription::take() in Humble (and Galactic) accepts a
+// value reference (ROSMessageType&), not a SharedPtr. The message is moved
+// into a shared_ptr before being passed to cv_bridge so toCvShare can alias
+// the buffer without a pixel copy. The SharedPtr overload was added in Iron.
 
 #include <chrono>
 #include <cstdint>
@@ -69,10 +74,13 @@ public:
     timer_ = create_wall_timer(
       std::chrono::milliseconds(interval_ms_),
       [this]() {
-        sensor_msgs::msg::Image::SharedPtr msg;
+        // Humble's take() accepts a value reference, not a SharedPtr.
+        // We move the value into a shared_ptr so cv_bridge can alias
+        // the buffer without an extra pixel copy.
+        sensor_msgs::msg::Image msg;
         rclcpp::MessageInfo info;
         if (sub_->take(msg, info)) {
-          save(msg);
+          save(std::make_shared<sensor_msgs::msg::Image>(std::move(msg)));
         }
       });
 
