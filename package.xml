@@ -28,6 +28,7 @@
   <!-- NITROS managed publisher + NitrosImage type -->
   <depend>isaac_ros_managed_nitros</depend>
   <depend>isaac_ros_nitros_image_type</depend>
+  <depend>cv_bridge</depend>
 
   <!-- Launch-time: the bridge launch file includes the dnn_image_encoder
        launch file and references isaac_ros_yolov8 / isaac_ros_tensor_rt

@@ -22,9 +22,14 @@ find_package(isaac_ros_nitros_image_type REQUIRED)
 # CUDAToolkit is preferred over the legacy FindCUDA module (removed in CMake 3.27).
 find_package(CUDAToolkit REQUIRED)
 
+# required for the snapshot node
+find_package(cv_bridge   REQUIRED)
+find_package(OpenCV      REQUIRED)
+
 # ── Shared library (composable node component) ────────────────────────────────
 add_library(${PROJECT_NAME}_component SHARED
   src/nitros_realsense_bridge_node.cpp
+  src/image_snapshot_node.cpp
 )
 
 # Headers from our own package (none yet, but keeps the pattern consistent
@@ -45,6 +50,8 @@ ament_target_dependencies(${PROJECT_NAME}_component
   sensor_msgs
   isaac_ros_managed_nitros
   isaac_ros_nitros_image_type
+  cv_bridge
+  OpenCV
 )
 
 # Register the component so `ros2 component load` and ComposableNodeContainer
@@ -52,6 +59,7 @@ ament_target_dependencies(${PROJECT_NAME}_component
 #   realsense_nitros_bridge::NitrosRealsenseBridgeNode
 rclcpp_components_register_nodes(${PROJECT_NAME}_component
   "realsense_nitros_bridge::NitrosRealsenseBridgeNode"
+  "realsense_nitros_bridge::ImageSnapshotNode" 
 )
 
 # ── Installation ──────────────────────────────────────────────────────────────

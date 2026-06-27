@@ -45,11 +45,13 @@ isaac_ros_yolov8_realsense.launch.py
       engine_file_path:=/path/to/model.plan \
       [confidence_threshold:=0.25] [nms_threshold:=0.45] \
       [center_sample_fraction:=0.25] \
-      [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200]
+      [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200] \
+      [enable_snapshot:=True] [snapshot_output_dir:=/data/captures]
 """
 
 import json
 import os
+import shutil
 
 from ament_index_python.packages import get_package_share_directory
 import launch
@@ -76,6 +78,12 @@ DEFAULT_INPUT_W   = '640'
 DEFAULT_INPUT_H   = '480'
 DEFAULT_NETWORK_W = '640'
 DEFAULT_NETWORK_H = '640'
+
+# ── Snapshot defaults ─────────────────────────────────────────────────────────
+# ISAAC_ROS_WS is set in the Isaac ROS Docker environment. Falls back to the
+# standard path so the default works both inside and outside the container.
+ISAAC_ROS_WS         = os.environ.get('ISAAC_ROS_WS', '/workspaces/isaac_ros-dev')
+DEFAULT_SNAPSHOT_DIR = os.path.join(ISAAC_ROS_WS, 'data', 'realsense-captures')
 
 
 def generate_launch_description():
@@ -116,9 +124,44 @@ def generate_launch_description():
         DeclareLaunchArgument('estimate_velocity', default_value='True',
             description='Finite-difference v_x/v_y/v_z/a_x/a_y/a_z for CVTarget '
                         'from consecutive /roi_point samples'),
+        # ── Image snapshot ───────────────────────────────────────────────────
+        DeclareLaunchArgument('enable_snapshot', default_value='False',
+            description='Capture training images from /color/image_raw to disk'),
+        DeclareLaunchArgument('snapshot_output_dir', default_value=DEFAULT_SNAPSHOT_DIR,
+            description='Directory to write captured frames'),
+        DeclareLaunchArgument('snapshot_interval_ms', default_value='500',
+            description='Milliseconds between captures (500 = 2 Hz)'),
+        DeclareLaunchArgument('snapshot_format', default_value='jpg',
+            description='Image format written to disk: jpg or png'),
+        DeclareLaunchArgument('snapshot_disk_limit_pct', default_value='75.0',
+            description='Refuse to launch (and stop capturing) above this disk usage %'),
     ]
 
     def create_nodes(context):
+
+        # ── Pre-launch disk check ─────────────────────────────────────────────
+        # This block is the ONLY thing that is conditional on enable_snapshot.
+        # It runs in Python before any ROS nodes start, so a full disk produces
+        # a clean error message instead of a C++ exception buried in the log.
+        if LaunchConfiguration('enable_snapshot').perform(context) == 'True':
+            snap_dir   = LaunchConfiguration('snapshot_output_dir').perform(context)
+            limit_pct  = float(LaunchConfiguration('snapshot_disk_limit_pct').perform(context))
+            os.makedirs(snap_dir, exist_ok=True)
+            usage    = shutil.disk_usage(snap_dir)
+            used_pct = usage.used / usage.total * 100.0
+            if used_pct > limit_pct:
+                raise RuntimeError(
+                    f'\n\n[ImageSnapshotNode] Disk at \'{snap_dir}\' is '
+                    f'{used_pct:.1f}% full (limit: {limit_pct:.0f}%).\n'
+                    f'  Used:      {usage.used  / 1e9:.1f} GB\n'
+                    f'  Available: {usage.free  / 1e9:.1f} GB\n'
+                    f'  Total:     {usage.total / 1e9:.1f} GB\n'
+                    'Free up space or set snapshot_output_dir:=<path> '
+                    'or snapshot_disk_limit_pct:=<higher_value>.\n'
+                )
+
+        # ── Resolve launch arguments ──────────────────────────────────────────
+        # Everything below runs unconditionally — snapshot or not.
         input_w   = LaunchConfiguration('input_image_width').perform(context)
         input_h   = LaunchConfiguration('input_image_height').perform(context)
         network_w = LaunchConfiguration('network_image_width').perform(context)
@@ -228,19 +271,48 @@ def generate_launch_description():
             extra_arguments=[{'use_intra_process_comms': True}],
         )
 
+        # ── Image snapshot node ───────────────────────────────────────────────
+        # Defined unconditionally; only appended to the container when
+        # enable_snapshot:=True. Remaps its generic 'image' sub to the actual
+        # realsense color topic so the same node works with any camera source.
+        snapshot_node = ComposableNode(
+            package='realsense_yolov8_nitros_bridge',
+            plugin='realsense_nitros_bridge::ImageSnapshotNode',
+            name='image_snapshot',
+            remappings=[('image', REALSENSE_COLOR_TOPIC)],
+            parameters=[{
+                'output_dir':          LaunchConfiguration('snapshot_output_dir').perform(context),
+                'interval_ms':         int(LaunchConfiguration('snapshot_interval_ms').perform(context)),
+                'format':              LaunchConfiguration('snapshot_format').perform(context),
+                'disk_limit_pct':      float(LaunchConfiguration('snapshot_disk_limit_pct').perform(context)),
+                'disk_check_interval': 20,
+            }],
+            extra_arguments=[{'use_intra_process_comms': True}],
+        )
+
+        # ── Build container node list ─────────────────────────────────────────
+        # Start with the nodes that always run, then conditionally append
+        # the snapshot node. The container is created from this list below.
+        node_descriptions = [
+            realsense_node,
+            tensor_rt_node,
+            yolov8_decoder_node,
+            detection_picker_node,
+            roi_depth_node,
+        ]
+        if LaunchConfiguration('enable_snapshot').perform(context) == 'True':
+            node_descriptions.append(snapshot_node)
+            print(f'[isaac_ros_yolov8_realsense] Snapshot enabled → '
+                  f'{LaunchConfiguration("snapshot_output_dir").perform(context)} '
+                  f'every {LaunchConfiguration("snapshot_interval_ms").perform(context)} ms')
+
         # ── Shared component container ────────────────────────────────────────
         container = ComposableNodeContainer(
             name='yolov8_realsense_container',
             namespace='',
             package='rclcpp_components',
             executable='component_container_mt',
-            composable_node_descriptions=[
-                realsense_node,
-                tensor_rt_node,
-                yolov8_decoder_node,
-                detection_picker_node,
-                roi_depth_node,
-            ],
+            composable_node_descriptions=node_descriptions,
             output='screen',
             arguments=['--ros-args', '--log-level', 'INFO'],
         )
