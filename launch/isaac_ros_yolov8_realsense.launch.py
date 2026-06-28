@@ -43,6 +43,7 @@ isaac_ros_yolov8_realsense.launch.py
 
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
       engine_file_path:=/path/to/model.plan \
+      num_classes:=<N> \
       [confidence_threshold:=0.25] [nms_threshold:=0.45] \
       [center_sample_fraction:=0.25] \
       [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200] \
@@ -106,6 +107,11 @@ def generate_launch_description():
         DeclareLaunchArgument('force_engine_update', default_value='False'),
         DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
         DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
+        DeclareLaunchArgument('num_classes', default_value='8',
+            description='Number of object classes your model was trained on. '
+                        'MUST match your model — the decoder default of 80 (COCO) '
+                        'will cause a silent out-of-bounds crash if your model has '
+                        'a different class count. (ours has 8)'),
         DeclareLaunchArgument('center_sample_fraction', default_value='0.25',
             description='Fraction of bbox center to sample for depth (0.05–1.0)'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
@@ -180,6 +186,7 @@ def generate_launch_description():
         force_engine_update  = LaunchConfiguration('force_engine_update').perform(context) == 'True'
         confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
         nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
+        num_classes          = int(LaunchConfiguration('num_classes').perform(context))
         center_sample_frac   = float(LaunchConfiguration('center_sample_fraction').perform(context))
         min_det_score        = float(LaunchConfiguration('min_detection_score').perform(context))
 
@@ -231,6 +238,11 @@ def generate_launch_description():
             parameters=[{
                 'confidence_threshold': confidence_threshold,
                 'nms_threshold':        nms_threshold,
+                # CRITICAL: must match the number of classes in your model.
+                # The C++ decoder defaults to 80 (COCO) and hardcodes 8400
+                # output anchors. With a smaller model the decoder walks off
+                # the end of the output tensor → silent segfault, no error log.
+                'num_classes':          num_classes,
             }],
         )
 
