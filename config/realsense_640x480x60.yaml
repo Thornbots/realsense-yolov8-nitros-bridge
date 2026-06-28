@@ -30,3 +30,4 @@ enable_infra2: false
 
 align_depth.enable: false
 publish_tf: true
+initial_reset: true
