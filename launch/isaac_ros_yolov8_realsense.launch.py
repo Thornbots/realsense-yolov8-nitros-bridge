@@ -145,6 +145,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
             description='Within the serial bridge launch, also launch the '
                         '/roi_point -> CVTarget adapter (vs. cv_target node only)'),
+        DeclareLaunchArgument('enable_sentry_pkg',default_value='True',description='Also the SLAM stack'),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
             description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
@@ -426,7 +427,14 @@ def generate_launch_description():
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
-
-        return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge]
+        sentry_pkg = IncludeLaunchDescription(
+          PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory('sentry_pkg'),
+                    'launch', 'auto.launch.py')
+            ),
+            condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
+        )
+        return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge, sentry_pkg]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
