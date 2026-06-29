@@ -27,8 +27,15 @@ isaac_ros_yolov8_realsense.launch.py
     → /tensor_pub → tensor_rt (TensorRT YOLOv8 inference)
     → /tensor_sub → yolov8_decoder_node
     → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space)
-    → detection_picker_node  (picks best, scales bbox to color image space)
+    → detection_picker_node  (filters out allied-team classes using the
+                              referee team colour, picks best, scales bbox to
+                              color image space)
     → /roi  (Detection2D, bbox in 640×480 COLOR image space)
+
+  Team-colour filtering: detection_picker_node subscribes to the referee
+  system status published by dji_serial_bridge_node on /dji_serial_bridge/ref_sys
+  (RefSysStatus). Blue team excludes class IDs 0–3, red team excludes 4–7. Until
+  the first status arrives, all detections pass through (with a throttled warning).
     → roi_depth_node  (LUT lookup + center-sample depth)
     → /roi_point  (geometry_msgs/PointStamped, REP-103 camera body frame)
     → point_to_cv_target_node  (dji_serial_bridge package — frame convert +
@@ -116,6 +123,21 @@ def generate_launch_description():
             description='Fraction of bbox center to sample for depth (0.05–1.0)'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
             description='Relay node ignores detections below this confidence'),
+        DeclareLaunchArgument('ref_sys_topic', default_value='/dji_serial_bridge/ref_sys',
+            description='RefSysStatus topic the detection picker reads to learn '
+                        'the referee team colour for allied-detection filtering. '
+                        'Must match dji_serial_bridge_node\'s ~/ref_sys output '
+                        '(node name "dji_serial_bridge", so /dji_serial_bridge/ref_sys).'),
+        DeclareLaunchArgument('center_weight', default_value='1.0',
+            description='Weight of centrality (1 at image centre, 0 at corners) '
+                        'in the picker\'s target score — favours what the robot '
+                        'is already aimed at'),
+        DeclareLaunchArgument('priority_class_bonus', default_value='0.5',
+            description='Score bonus added to a detection whose class is in '
+                        'priority_class_ids'),
+        DeclareLaunchArgument('priority_class_ids', default_value='[2, 6]',
+            description='Class IDs treated as high-value targets (the 3rd target '
+                        'in each 0-3 / 4-7 team group)'),
         # ── DJI serial bridge ────────────────────────────────────────────────
         DeclareLaunchArgument('enable_serial_bridge', default_value='True',
             description='Also launch dji_serial_bridge_node and the '
@@ -189,12 +211,18 @@ def generate_launch_description():
         num_classes          = int(LaunchConfiguration('num_classes').perform(context))
         center_sample_frac   = float(LaunchConfiguration('center_sample_fraction').perform(context))
         min_det_score        = float(LaunchConfiguration('min_detection_score').perform(context))
+        ref_sys_topic        = LaunchConfiguration('ref_sys_topic').perform(context)
+        center_weight        = float(LaunchConfiguration('center_weight').perform(context))
+        priority_class_bonus = float(LaunchConfiguration('priority_class_bonus').perform(context))
+        priority_class_ids   = [int(c) for c in
+                                json.loads(LaunchConfiguration('priority_class_ids').perform(context))]
 
         pkg_share = get_package_share_directory('realsense_yolov8_nitros_bridge')
 
         print(f'[isaac_ros_yolov8_realsense] Color: {input_w}x{input_h} → network: {network_w}x{network_h}')
         print(f'[isaac_ros_yolov8_realsense] Depth center_sample_fraction: {center_sample_frac}')
         print(f'[isaac_ros_yolov8_realsense] Extrinsics topic: {REALSENSE_EXTRINSICS_TOPIC}')
+        print(f'[isaac_ros_yolov8_realsense] Team-filter RefSysStatus topic: {ref_sys_topic}')
 
         # ── RealSense composable node ─────────────────────────────────────────
         # Stream profiles are set via YAML so they are available in the parameter
@@ -249,18 +277,26 @@ def generate_launch_description():
         # ── Detection ROI relay node ──────────────────────────────────────────
         # /detections_output (Detection2DArray, network space)
         #   → /roi (Detection2D, color image space, bbox scaled by color/network ratio)
+        # Also subscribes to ref_sys_topic (RefSysStatus from dji_serial_bridge_node)
+        # to drop allied-team detections: blue team excludes class IDs 0–3, red
+        # team excludes 4–7. All detections pass through until the first status
+        # message arrives.
         detection_picker_node = ComposableNode(
             package='roi_depth_query',
             plugin='roi_depth_query::DetectionRoiRelayNode',
             name='detection_picker_node',
             parameters=[{
-                'detections_topic': '/detections_output',
-                'roi_topic':        '/roi',
-                'network_width':    int(network_w),
-                'network_height':   int(network_h),
-                'color_width':      int(input_w),
-                'color_height':     int(input_h),
-                'min_score':        min_det_score,
+                'detections_topic':     '/detections_output',
+                'roi_topic':            '/roi',
+                'ref_sys_topic':        ref_sys_topic,
+                'network_width':        int(network_w),
+                'network_height':       int(network_h),
+                'color_width':          int(input_w),
+                'color_height':         int(input_h),
+                'min_score':            min_det_score,
+                'center_weight':        center_weight,
+                'priority_class_bonus': priority_class_bonus,
+                'priority_class_ids':   priority_class_ids,
             }],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
