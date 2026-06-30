@@ -48,13 +48,23 @@ isaac_ros_yolov8_realsense.launch.py
 
 ── Usage ─────────────────────────────────────────────────────────────────────
 
+  Only engine_file_path is required; every other argument has the default shown
+  below. Pass arguments as plain name:=value pairs. Do NOT wrap them in square
+  brackets — the brackets become part of the token (e.g. "[enable_sentry_pkg"),
+  the name no longer matches, and the override is silently ignored.
+  (priority_class_ids:=[2,6] is the one exception: there the brackets are the
+  list *value*, not optionality markers.)
+
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
-      engine_file_path:=/path/to/model.plan \
-      num_classes:=<N> \
-      [confidence_threshold:=0.25] [nms_threshold:=0.45] \
-      [center_sample_fraction:=0.25] \
-      [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200] \
-      [enable_snapshot:=True] [snapshot_output_dir:=/data/captures]
+      engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
+      num_classes:=8 \
+      confidence_threshold:=0.25 nms_threshold:=0.45 \
+      center_sample_fraction:=0.25 \
+      center_weight:=1.0 priority_class_bonus:=0.5 priority_class_ids:=[2,6] \
+      ref_sys_topic:=/dji_serial_bridge/ref_sys \
+      serial_device:=/dev/ttyTHS1 serial_baudrate:=115200 \
+      enable_sentry_pkg:=True lidar_serial_port:=/dev/ttyUSB0 enable_rviz:=False \
+      enable_snapshot:=False snapshot_output_dir:=/data/realsense-captures
 """
 
 import json
