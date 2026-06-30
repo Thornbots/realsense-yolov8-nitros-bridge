@@ -158,6 +158,12 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_sentry_pkg', default_value='True',
             description='Also launch the sentry_pkg navigation/SLAM stack '
                         '(auto.launch.py). Set False to run vision only.'),
+        DeclareLaunchArgument('enable_visualizer', default_value='False',
+            description='Launch detection_picker_visualizer.py: overlays the '
+                        'picker\'s scoring factors (conf/centrality/priority/'
+                        'team-exclusion/score) on the network-space resize image '
+                        'and tags the detection the picker would pick. Publishes '
+                        '/yolov8_processed_image. For bench debugging.'),
         DeclareLaunchArgument('lidar_serial_port', default_value='/dev/ttyUSB0',
             description='Serial device path for the SLLIDAR, forwarded to '
                         'sentry_pkg auto.launch.py. Inside the Isaac ROS '
@@ -448,6 +454,29 @@ def generate_launch_description():
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
+        # ── Detection picker visualizer ───────────────────────────────────────
+        # Regular rclpy node (not composable). Params mirror detection_picker_node
+        # so the overlay reflects the live scoring config. Subscribes with
+        # best-effort SensorDataQoS, matching the NITROS resize image stream.
+        visualizer = LaunchNode(
+            package='roi_depth_query',
+            executable='detection_picker_visualizer.py',
+            name='detection_picker_visualizer',
+            parameters=[{
+                'detections_topic':     '/detections_output',
+                'image_topic':          '/yolov8_encoder/resize/image',
+                'ref_sys_topic':        ref_sys_topic,
+                'network_width':        int(network_w),
+                'network_height':       int(network_h),
+                'min_score':            min_det_score,
+                'center_weight':        center_weight,
+                'priority_class_bonus': priority_class_bonus,
+                'priority_class_ids':   priority_class_ids,
+            }],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_visualizer')),
+        )
+
         sentry_pkg = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
@@ -460,6 +489,7 @@ def generate_launch_description():
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
         )
-        return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge, sentry_pkg]
+        return [container, yolov8_encoder_launch, extrinsics_relay,
+                visualizer, serial_bridge, sentry_pkg]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
