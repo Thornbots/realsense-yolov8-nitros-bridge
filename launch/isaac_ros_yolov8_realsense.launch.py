@@ -145,7 +145,14 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
             description='Within the serial bridge launch, also launch the '
                         '/roi_point -> CVTarget adapter (vs. cv_target node only)'),
-        DeclareLaunchArgument('enable_sentry_pkg',default_value='True',description='Also the SLAM stack'),
+        DeclareLaunchArgument('enable_sentry_pkg', default_value='True',
+            description='Also launch the sentry_pkg navigation/SLAM stack '
+                        '(auto.launch.py). Set False to run vision only.'),
+        DeclareLaunchArgument('lidar_serial_port', default_value='/dev/ttyUSB0',
+            description='Serial device path for the SLLIDAR, forwarded to '
+                        'sentry_pkg auto.launch.py. Inside the Isaac ROS '
+                        'container the hotplug USB lidar is read via the '
+                        '/host-dev bind, e.g. /host-dev/ttyUSB0.'),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
             description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
@@ -428,11 +435,14 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
         sentry_pkg = IncludeLaunchDescription(
-          PythonLaunchDescriptionSource(
+            PythonLaunchDescriptionSource(
                 os.path.join(
                     get_package_share_directory('sentry_pkg'),
                     'launch', 'auto.launch.py')
             ),
+            launch_arguments={
+                'lidar_serial_port': LaunchConfiguration('lidar_serial_port'),
+            }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
         )
         return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge, sentry_pkg]
