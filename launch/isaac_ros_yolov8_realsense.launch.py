@@ -48,13 +48,23 @@ isaac_ros_yolov8_realsense.launch.py
 
 ── Usage ─────────────────────────────────────────────────────────────────────
 
+  Only engine_file_path is required; every other argument has the default shown
+  below. Pass arguments as plain name:=value pairs. Do NOT wrap them in square
+  brackets — the brackets become part of the token (e.g. "[enable_sentry_pkg"),
+  the name no longer matches, and the override is silently ignored.
+  (priority_class_ids:=[2,6] is the one exception: there the brackets are the
+  list *value*, not optionality markers.)
+
   ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
-      engine_file_path:=/path/to/model.plan \
-      num_classes:=<N> \
-      [confidence_threshold:=0.25] [nms_threshold:=0.45] \
-      [center_sample_fraction:=0.25] \
-      [serial_device:=/dev/ttyTHS1] [serial_baudrate:=115200] \
-      [enable_snapshot:=True] [snapshot_output_dir:=/data/captures]
+      engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
+      num_classes:=8 \
+      confidence_threshold:=0.25 nms_threshold:=0.45 \
+      center_sample_fraction:=0.25 \
+      center_weight:=1.0 priority_class_bonus:=0.5 priority_class_ids:=[2,6] \
+      ref_sys_topic:=/dji_serial_bridge/ref_sys \
+      serial_device:=/dev/ttyTHS1 serial_baudrate:=115200 \
+      enable_sentry_pkg:=True lidar_serial_port:=/dev/ttyUSB0 enable_rviz:=False \
+      enable_snapshot:=False snapshot_output_dir:=/data/realsense-captures
 """
 
 import json
@@ -148,6 +158,12 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_sentry_pkg', default_value='True',
             description='Also launch the sentry_pkg navigation/SLAM stack '
                         '(auto.launch.py). Set False to run vision only.'),
+        DeclareLaunchArgument('enable_visualizer', default_value='False',
+            description='Launch detection_picker_visualizer.py: overlays the '
+                        'picker\'s scoring factors (conf/centrality/priority/'
+                        'team-exclusion/score) on the network-space resize image '
+                        'and tags the detection the picker would pick. Publishes '
+                        '/yolov8_processed_image. For bench debugging.'),
         DeclareLaunchArgument('lidar_serial_port', default_value='/dev/ttyUSB0',
             description='Serial device path for the SLLIDAR, forwarded to '
                         'sentry_pkg auto.launch.py. Inside the Isaac ROS '
@@ -438,6 +454,29 @@ def generate_launch_description():
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
+        # ── Detection picker visualizer ───────────────────────────────────────
+        # Regular rclpy node (not composable). Params mirror detection_picker_node
+        # so the overlay reflects the live scoring config. Subscribes with
+        # best-effort SensorDataQoS, matching the NITROS resize image stream.
+        visualizer = LaunchNode(
+            package='roi_depth_query',
+            executable='detection_picker_visualizer.py',
+            name='detection_picker_visualizer',
+            parameters=[{
+                'detections_topic':     '/detections_output',
+                'image_topic':          '/yolov8_encoder/resize/image',
+                'ref_sys_topic':        ref_sys_topic,
+                'network_width':        int(network_w),
+                'network_height':       int(network_h),
+                'min_score':            min_det_score,
+                'center_weight':        center_weight,
+                'priority_class_bonus': priority_class_bonus,
+                'priority_class_ids':   priority_class_ids,
+            }],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_visualizer')),
+        )
+
         sentry_pkg = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
@@ -449,6 +488,7 @@ def generate_launch_description():
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
         )
-        return [container, yolov8_encoder_launch, extrinsics_relay, serial_bridge, sentry_pkg]
+        return [container, yolov8_encoder_launch, extrinsics_relay,
+                visualizer, serial_bridge, sentry_pkg]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
