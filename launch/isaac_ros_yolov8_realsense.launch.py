@@ -153,10 +153,8 @@ def generate_launch_description():
                         'sentry_pkg auto.launch.py. Inside the Isaac ROS '
                         'container the hotplug USB lidar is read via the '
                         '/host-dev bind, e.g. /host-dev/ttyUSB0.'),
-        DeclareLaunchArgument('enable_rviz', default_value='False',
-            description='Launch rviz2 inside sentry_pkg auto.launch.py. Off by '
-                        'default — the robot runs headless. Enable for bench '
-                        'debugging with a display attached.'),
+        DeclareLaunchArgument('debug_log', default_value='True',
+            description='Enable for lots more logs' ),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
             description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
@@ -435,6 +433,8 @@ def generate_launch_description():
                 'roi_topic':               '/roi',
                 'cv_target_topic':         '/cv_target',
                 'estimate_velocity':       LaunchConfiguration('estimate_velocity'),
+                'debug_log':       LaunchConfiguration('debug_log'),
+
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
@@ -446,7 +446,6 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'lidar_serial_port': LaunchConfiguration('lidar_serial_port'),
-                'enable_rviz':       LaunchConfiguration('enable_rviz'),
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
         )
