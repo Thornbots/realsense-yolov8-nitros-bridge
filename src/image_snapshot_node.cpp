@@ -1,20 +1,12 @@
 // image_snapshot_node.cpp
 //
 // Timer-driven training image capture with disk-space guardrail.
-//
-// Files are named <sec>_<nanosec>.<fmt> — unique per frame, sort
-// chronologically, never overwrite.
-//
-// Constructor throws std::runtime_error if the output filesystem is
-// already over the disk_limit_pct threshold, preventing the component
-// from loading. The save() method also checks periodically (every
-// disk_check_interval saves) and cancels the timer if the threshold
-// is crossed while running.
-//
-// NOTE: rclcpp::Subscription::take() in Humble (and Galactic) accepts a
-// value reference (ROSMessageType&), not a SharedPtr. The message is moved
-// into a shared_ptr before being passed to cv_bridge so toCvShare can alias
-// the buffer without a pixel copy. The SharedPtr overload was added in Iron.
+// Files named <sec>_<nanosec>.<fmt> — unique, sort chronologically, never
+// overwritten.
+// Constructor throws std::runtime_error if the filesystem is already over
+// disk_limit_pct; save() re-checks every disk_check_interval saves and
+// cancels the timer if the threshold is crossed while running.
+// see README.md for design notes (rclcpp::Subscription::take() API caveat)
 
 #include <chrono>
 #include <cstdint>

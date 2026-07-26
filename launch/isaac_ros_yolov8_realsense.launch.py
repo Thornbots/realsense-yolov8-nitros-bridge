@@ -6,65 +6,10 @@
 """
 isaac_ros_yolov8_realsense.launch.py
 
-── Actual topic layout (verified from runtime log) ──────────────────────────
-
-  With ComposableNode(name='camera', namespace=''), realsense-ros resolves
-  all topics against namespace '' (root). There is NO /camera/ prefix:
-
-    /color/image_raw               → dnn_image_encoder
-    /color/camera_info             → roi_depth_node (LUT build)
-    /depth/image_rect_raw          → roi_depth_node (sampling)
-    /depth/camera_info             → roi_depth_node (LUT build)
-    /extrinsics/depth_to_color     → extrinsics_relay_node → roi_depth_node params
-
-  NOTE: If you launch with an explicit namespace (e.g. namespace='camera'),
-  all topics will gain a /camera/ prefix and these constants must be updated.
-
-── Inference chain ───────────────────────────────────────────────────────────
-
-  /color/image_raw
-    → dnn_image_encoder (resize 640×480 → 640×640, normalise, interleave→planar)
-    → /tensor_pub → tensor_rt (TensorRT YOLOv8 inference)
-    → /tensor_sub → yolov8_decoder_node
-    → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space)
-    → detection_picker_node  (filters out allied-team classes using the
-                              referee team colour, picks best, scales bbox to
-                              color image space)
-    → /roi  (Detection2D, bbox in 640×480 COLOR image space)
-
-  Team-colour filtering: detection_picker_node subscribes to the referee
-  system status published by dji_serial_bridge_node on /dji_serial_bridge/ref_sys
-  (RefSysStatus). Blue team excludes class IDs 0–3, red team excludes 4–7. Until
-  the first status arrives, all detections pass through (with a throttled warning).
-    → roi_depth_node  (LUT lookup + center-sample depth)
-    → /roi_point  (geometry_msgs/PointStamped, REP-103 camera body frame)
-    → point_to_cv_target_node  (dji_serial_bridge package — frame convert +
-                                 finite-difference velocity/acceleration)
-    → /cv_target  (dji_serial_bridge/msg/CVTarget)
-    → dji_serial_bridge_node  → UART → MCB / gimbal controller
-
-  Set enable_serial_bridge:=false to omit the last two nodes (e.g. when
-  bench-testing the vision pipeline without the MCB attached).
-
-── Usage ─────────────────────────────────────────────────────────────────────
-
-  Only engine_file_path is required; every other argument has the default shown
-  below. Pass arguments as plain name:=value pairs. Do NOT wrap them in square
-  brackets — the brackets become part of the token (e.g. "[enable_sentry_pkg"),
-  the name no longer matches, and the override is silently ignored.
-  (priority_class_ids:=[2,6] is the one exception: there the brackets are the
-  list *value*, not optionality markers.)
-
-  ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
-      engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
-      num_classes:=8 \
-      confidence_threshold:=0.25 nms_threshold:=0.45 \
-      center_sample_fraction:=0.25 \
-      center_weight:=1.0 priority_class_bonus:=0.5 priority_class_ids:=[2,6] \
-      ref_sys_topic:=/dji_serial_bridge/ref_sys \
-      serial_device:=/dev/ttyTHS1 serial_baudrate:=115200 \
-      enable_sentry_pkg:=True lidar_serial_port:=/dev/ttyUSB0 enable_rviz:=False \
-      enable_snapshot:=False snapshot_output_dir:=/data/realsense-captures
+Runtime topics have NO /camera/ prefix (e.g. /color/image_raw, /roi,
+/cv_target). Full topic layout/inference chain/usage are in README.md —
+see there before renaming topics or adding a namespace. Only
+engine_file_path is required; pass other args as plain name:=value.
 """
 
 import json
