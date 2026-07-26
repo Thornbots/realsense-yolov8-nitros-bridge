@@ -1,29 +1,11 @@
 // nitros_realsense_bridge_node.cpp
 //
-// PROTOTYPE — eliminates the CPU→GPU copy (Copy B) by publishing a NitrosImage
-// directly from a sensor_msgs/Image subscription using CUDA pinned memory.
-//
-// This is the bridge node described in NOTES.md §4.  It is a drop-in
-// replacement for the realsense→dnn_image_encoder connection.
-//
-// Build requirements (add to CMakeLists.txt):
-//   isaac_ros_managed_nitros
-//   isaac_ros_nitros_image_type
-//   CUDA::cudart
-//
-// Drop this node into the same component_container_mt as TensorRTNode.
-// Point its "image" subscription at /camera/camera/color/image_raw.
-// The TensorRTNode (or dnn_image_encoder) subscribes to its "nitros_image" output.
-//
-// NOTE: librealsense does not support pluggable allocators, so we still pay
-// one cudaMemcpyHostToDevice here.  What we save vs. the stock encoder:
-//   • No intermediate CPU resize (we push the raw frame to GPU then resize on GPU)
-//   • The frame sits in pinned memory so the H2D transfer can be DMA-pipelined
-//     while the GPU is busy with the previous frame's inference.
-//
-// For a truly zero-copy path, realsense-ros would need to allocate its image
-// buffers in CUDA pinned memory from the start — that requires patching
-// librealsense's frame allocator.
+// PROTOTYPE — publishes a NitrosImage from a sensor_msgs/Image subscription
+// via CUDA pinned memory, replacing realsense->dnn_image_encoder. Requires
+// isaac_ros_managed_nitros, isaac_ros_nitros_image_type, CUDA::cudart.
+// Drop into the same component_container_mt as TensorRTNode.
+// CAVEAT: librealsense lacks a pluggable allocator, so one
+// cudaMemcpyHostToDevice remains -- see README.md for design notes.
 
 #include <cuda_runtime.h>
 

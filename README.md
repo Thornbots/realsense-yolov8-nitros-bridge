@@ -129,3 +129,79 @@ The `custom_nitros_dnn_image_encoder` example passes `(cudaStream_t) 0` (the def
 | B: CPU → GPU (H2D) | `cudaMemcpyDefault` in encoder | **No** | Requires NitrosImage-native realsense driver |
 
 The launch file in `isaac_ros_yolov8_realsense.launch.py` gives you the best possible performance with the current open-source stack: Copy A is removed via IPC, and Copy B is the single unavoidable H2D transfer that occurs once per frame as the data enters the GPU pipeline.
+
+## Notes
+
+Trimmed-out detail from in-code comments, kept here for reference.
+
+### `launch/isaac_ros_yolov8_realsense.launch.py`
+
+**Verified runtime topic layout** (with `ComposableNode(name='camera', namespace='')`, realsense-ros resolves all topics against the root namespace — there is NO `/camera/` prefix):
+
+```
+/color/image_raw               → dnn_image_encoder
+/color/camera_info             → roi_depth_node (LUT build)
+/depth/image_rect_raw          → roi_depth_node (sampling)
+/depth/camera_info             → roi_depth_node (LUT build)
+/extrinsics/depth_to_color     → extrinsics_relay_node → roi_depth_node params
+```
+
+If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics gain a `/camera/` prefix and these constants must be updated to match.
+
+**Full inference chain:**
+
+```
+/color/image_raw
+  → dnn_image_encoder (resize 640×480 → 640×640, normalise, interleave→planar)
+  → /tensor_pub → tensor_rt (TensorRT YOLOv8 inference)
+  → /tensor_sub → yolov8_decoder_node
+  → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space)
+  → detection_picker_node  (filters out allied-team classes using the
+                            referee team colour, picks best, scales bbox to
+                            color image space)
+  → /roi  (Detection2D, bbox in 640×480 COLOR image space)
+  → roi_depth_node  (LUT lookup + center-sample depth)
+  → /roi_point  (geometry_msgs/PointStamped, REP-103 camera body frame)
+  → point_to_cv_target_node  (dji_serial_bridge package — frame convert +
+                               finite-difference velocity/acceleration)
+  → /cv_target  (dji_serial_bridge/msg/CVTarget)
+  → dji_serial_bridge_node  → UART → MCB / gimbal controller
+```
+
+**Team-colour filtering:** `detection_picker_node` subscribes to the referee system status published by `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`). Blue team excludes class IDs 0–3, red team excludes 4–7. Until the first status arrives, all detections pass through (with a throttled warning).
+
+Set `enable_serial_bridge:=false` to omit the last two nodes (e.g. when bench-testing the vision pipeline without the MCB attached).
+
+**Usage example** — every argument besides `engine_file_path` has a default; pass args as plain `name:=value` pairs (do not bracket them, or the token becomes part of the name and the override is silently ignored — `priority_class_ids:=[2,6]` is the sole exception, where the brackets are the list value itself):
+
+```
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
+    engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
+    num_classes:=8 \
+    confidence_threshold:=0.25 nms_threshold:=0.45 \
+    center_sample_fraction:=0.25 \
+    center_weight:=1.0 priority_class_bonus:=0.5 priority_class_ids:=[2,6] \
+    ref_sys_topic:=/dji_serial_bridge/ref_sys \
+    serial_device:=/dev/ttyTHS1 serial_baudrate:=115200 \
+    enable_sentry_pkg:=True lidar_serial_port:=/dev/ttyUSB0 enable_rviz:=False \
+    enable_snapshot:=False snapshot_output_dir:=/data/realsense-captures
+```
+
+### `src/image_snapshot_node.cpp`
+
+`rclcpp::Subscription::take()` in Humble (and Galactic) accepts a value reference (`ROSMessageType&`), not a `SharedPtr`. The message is moved into a `shared_ptr` before being passed to `cv_bridge` so `toCvShare` can alias the buffer without a pixel copy. The `SharedPtr` overload was added in Iron.
+
+### `src/nitros_realsense_bridge_node.cpp`
+
+This is the bridge node described in section 4 above — a drop-in replacement for the realsense→dnn_image_encoder connection.
+
+librealsense does not support pluggable allocators, so this node still pays one `cudaMemcpyHostToDevice`. What it saves versus the stock encoder:
+
+- No intermediate CPU resize (the raw frame is pushed to GPU, then resized on GPU).
+- The frame sits in pinned memory so the H2D transfer can be DMA-pipelined while the GPU is busy with the previous frame's inference.
+
+For a truly zero-copy path, realsense-ros would need to allocate its image buffers in CUDA pinned memory from the start — that requires patching librealsense's frame allocator.
+
+### `config/realsense_640x480x60.yaml`
+
+Depth is capped at 30 fps rather than matching color's 60 fps because the LUT only needs `camera_info` once, and the ROI depth node samples on detection events (~inference rate), not every depth frame. Halving depth FPS roughly halves its USB 3.x bandwidth contribution, which is what prevents the UVC watchdog / "Depth stream start failure" seen when running both streams at 60 fps on bandwidth-constrained USB controllers.
