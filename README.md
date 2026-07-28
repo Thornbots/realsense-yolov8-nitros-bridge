@@ -160,10 +160,13 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
                             referee team colour, picks best, scales bbox to
                             color image space)
   → /roi  (Detection2D, bbox in 640×480 COLOR image space)
-  → roi_depth_node  (LUT lookup + center-sample depth)
-  → /roi_point  (geometry_msgs/PointStamped, REP-103 camera body frame)
-  → point_to_cv_target_node  (dji_serial_bridge package — frame convert +
-                               finite-difference velocity/acceleration)
+  → roi_depth_node  (LUT lookup + center-sample depth, deprojects bbox
+                      corners + center)
+  → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: 4 corners +
+                           center + depth + confidence, REP-103 camera frame)
+  → point_to_cv_target_node  (sentry_pkg package — frame convert; also
+                               republishes /cv/panel_polygon for
+                               visualization)
   → /cv_target  (dji_serial_bridge/msg/CVTarget)
   → dji_serial_bridge_node  → UART → MCB / gimbal controller
 ```
