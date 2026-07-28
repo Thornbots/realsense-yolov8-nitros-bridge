@@ -120,9 +120,6 @@ def generate_launch_description():
             description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
             description='MCB serial baud rate'),
-        DeclareLaunchArgument('estimate_velocity', default_value='True',
-            description='Finite-difference v_x/v_y/v_z/a_x/a_y/a_z for CVTarget '
-                        'from consecutive /roi_point samples'),
         # ── Image snapshot ───────────────────────────────────────────────────
         DeclareLaunchArgument('enable_snapshot', default_value='False',
             description='Capture training images from /color/image_raw to disk'),
@@ -393,7 +390,6 @@ def generate_launch_description():
                 'roi_point_topic':         '/roi_point',
                 'roi_topic':               '/roi',
                 'cv_target_topic':         '/cv_target',
-                'estimate_velocity':       LaunchConfiguration('estimate_velocity'),
                 'debug_log':       LaunchConfiguration('debug_log'),
 
             }.items(),
