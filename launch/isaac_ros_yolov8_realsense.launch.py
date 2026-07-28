@@ -99,7 +99,7 @@ def generate_launch_description():
                         'point_to_cv_target_node adapter that feeds it'),
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
             description='Within the serial bridge launch, also launch the '
-                        '/roi_point -> CVTarget adapter (vs. cv_target node only)'),
+                        '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
         DeclareLaunchArgument('enable_sentry_pkg', default_value='True',
             description='Also launch the sentry_pkg navigation/SLAM stack '
                         '(auto.launch.py). Set False to run vision only.'),
@@ -372,11 +372,14 @@ def generate_launch_description():
         )
 
         # ── DJI serial bridge ──────────────────────────────────────────────────
-        # Brings up dji_serial_bridge_node (talks to the MCB over UART) plus
-        # point_to_cv_target_node, which converts roi_depth_node's /roi_point
-        # into the CVTarget message the bridge expects. This is the link that
-        # actually gets detections to the gimbal/MCB — without it the vision
-        # pipeline above only ever produces /roi_point with nothing downstream.
+        # Brings up dji_serial_bridge_node (talks to the MCB over UART) --
+        # point_to_cv_target_node (converts roi_depth_node's
+        # /cv/panel_detection into the CVTarget message the bridge expects)
+        # is launched separately by sentry_pkg's auto.launch.py below, via
+        # enable_sentry_pkg. dji_bridge.launch.py itself only declares
+        # device/baudrate/debug_log/params_file -- enable_cv_target_bridge,
+        # roi_point_topic, roi_topic, cv_target_topic below are not read by
+        # it (pre-existing, not touched here).
         serial_bridge = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
@@ -387,7 +390,7 @@ def generate_launch_description():
                 'device':                  LaunchConfiguration('serial_device'),
                 'baudrate':                LaunchConfiguration('serial_baudrate'),
                 'enable_cv_target_bridge': LaunchConfiguration('enable_cv_target_bridge'),
-                'roi_point_topic':         '/roi_point',
+                'roi_point_topic':         '/cv/panel_detection',
                 'roi_topic':               '/roi',
                 'cv_target_topic':         '/cv_target',
                 'debug_log':       LaunchConfiguration('debug_log'),
