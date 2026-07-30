@@ -76,17 +76,27 @@ def generate_launch_description():
                         'a different class count. (ours has 8)'),
         DeclareLaunchArgument('center_sample_fraction', default_value='0.25',
             description='Fraction of bbox center to sample for depth (0.05–1.0)'),
+        DeclareLaunchArgument('depth_max_age_s', default_value='0.05',
+            description='roi_depth_node: max |detection_stamp - depth_stamp| '
+                        'before a detection is dropped instead of paired with '
+                        'stale/future depth'),
+        DeclareLaunchArgument('max_detections', default_value='16',
+            description='roi_depth_node: cap on detections processed per '
+                        '/detections_output callback'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
-            description='Relay node ignores detections below this confidence'),
+            description='detection_picker_visualizer.py only (bench overlay) '
+                        '-- target_selector.py has its own min_score param, '
+                        'set separately via auto.launch.py'),
         DeclareLaunchArgument('ref_sys_topic', default_value='/dji_serial_bridge/ref_sys',
-            description='RefSysStatus topic the detection picker reads to learn '
-                        'the referee team colour for allied-detection filtering. '
-                        'Must match dji_serial_bridge_node\'s ~/ref_sys output '
-                        '(node name "dji_serial_bridge", so /dji_serial_bridge/ref_sys).'),
+            description='RefSysStatus topic sentry_pkg/target_selector.py reads '
+                        'to learn the referee team colour for allied-detection '
+                        'filtering. Must match dji_serial_bridge_node\'s ~/ref_sys '
+                        'output (node name "dji_serial_bridge", so '
+                        '/dji_serial_bridge/ref_sys).'),
         DeclareLaunchArgument('center_weight', default_value='1.0',
-            description='Weight of centrality (1 at image centre, 0 at corners) '
-                        'in the picker\'s target score — favours what the robot '
-                        'is already aimed at'),
+            description='Weight of centrality (1 at boresight, 0 at the FOV edge) '
+                        'in target_selector.py\'s panel score — favours what the '
+                        'robot is already aimed at'),
         DeclareLaunchArgument('priority_class_bonus', default_value='0.5',
             description='Score bonus added to a detection whose class is in '
                         'priority_class_ids'),
@@ -178,6 +188,8 @@ def generate_launch_description():
         nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
         num_classes          = int(LaunchConfiguration('num_classes').perform(context))
         center_sample_frac   = float(LaunchConfiguration('center_sample_fraction').perform(context))
+        depth_max_age_s      = float(LaunchConfiguration('depth_max_age_s').perform(context))
+        max_detections       = int(LaunchConfiguration('max_detections').perform(context))
         min_det_score        = float(LaunchConfiguration('min_detection_score').perform(context))
         ref_sys_topic        = LaunchConfiguration('ref_sys_topic').perform(context)
         center_weight        = float(LaunchConfiguration('center_weight').perform(context))
@@ -242,36 +254,13 @@ def generate_launch_description():
             }],
         )
 
-        # ── Detection ROI relay node ──────────────────────────────────────────
-        # /detections_output (Detection2DArray, network space)
-        #   → /roi (Detection2D, color image space, bbox scaled by color/network ratio)
-        # Also subscribes to ref_sys_topic (RefSysStatus from dji_serial_bridge_node)
-        # to drop allied-team detections: blue team excludes class IDs 0–3, red
-        # team excludes 4–7. All detections pass through until the first status
-        # message arrives.
-        detection_picker_node = ComposableNode(
-            package='roi_depth_query',
-            plugin='roi_depth_query::DetectionRoiRelayNode',
-            name='detection_picker_node',
-            parameters=[{
-                'detections_topic':     '/detections_output',
-                'roi_topic':            '/roi',
-                'ref_sys_topic':        ref_sys_topic,
-                'network_width':        int(network_w),
-                'network_height':       int(network_h),
-                'color_width':          int(input_w),
-                'color_height':         int(input_h),
-                'min_score':            min_det_score,
-                'center_weight':        center_weight,
-                'priority_class_bonus': priority_class_bonus,
-                'priority_class_ids':   priority_class_ids,
-            }],
-            extra_arguments=[{'use_intra_process_comms': True}],
-        )
-
         # ── ROI depth node ────────────────────────────────────────────────────
         # depth_ns / color_ns must match the actual published topic roots.
         # With name='camera', namespace='': topics are at /depth/... and /color/...
+        # Driven directly by /detections_output (network space) -- it scales
+        # each bbox to color space and deprojects internally, emitting ALL
+        # detections on /cv/panel_detections. Team filtering/picking moved
+        # downstream to sentry_pkg's target_selector.py (post-depth, 3D).
         roi_depth_node = ComposableNode(
             package='roi_depth_query',
             plugin='roi_depth_query::RoiDepthNode',
@@ -283,6 +272,13 @@ def generate_launch_description():
                 'min_depth_m':            0.1,
                 'max_depth_m':            10.0,
                 'center_sample_fraction': center_sample_frac,
+                'depth_max_age_s':        depth_max_age_s,
+                'max_detections':         max_detections,
+                'detections_topic':       '/detections_output',
+                'network_width':          int(network_w),
+                'network_height':         int(network_h),
+                'color_width':            int(input_w),
+                'color_height':           int(input_h),
             }],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
@@ -313,7 +309,6 @@ def generate_launch_description():
             realsense_node,
             tensor_rt_node,
             yolov8_decoder_node,
-            detection_picker_node,
             roi_depth_node,
         ]
         if LaunchConfiguration('enable_snapshot').perform(context) == 'True':
@@ -373,8 +368,9 @@ def generate_launch_description():
 
         # ── DJI serial bridge ──────────────────────────────────────────────────
         # Brings up dji_serial_bridge_node (talks to the MCB over UART) --
-        # point_to_cv_target_node (converts roi_depth_node's
-        # /cv/panel_detection into the CVTarget message the bridge expects)
+        # point_to_cv_target_node (converts target_selector.py's picked
+        # /cv/panel_detection, itself grouped from roi_depth_node's
+        # /cv/panel_detections, into the CVTarget message the bridge expects)
         # is launched separately by sentry_pkg's auto.launch.py below, via
         # enable_sentry_pkg. dji_bridge.launch.py itself only declares
         # device/baudrate/debug_log/params_file -- enable_cv_target_bridge,
@@ -399,9 +395,10 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
         # ── Detection picker visualizer ───────────────────────────────────────
-        # Regular rclpy node (not composable). Params mirror detection_picker_node
-        # so the overlay reflects the live scoring config. Subscribes with
-        # best-effort SensorDataQoS, matching the NITROS resize image stream.
+        # Regular rclpy node (not composable). Params mirror target_selector.py's
+        # 2D-era scoring so the overlay reflects roughly the same picking logic
+        # (pre-depth, for bench debugging). Subscribes with best-effort
+        # SensorDataQoS, matching the NITROS resize image stream.
         visualizer = LaunchNode(
             package='roi_depth_query',
             executable='detection_picker_visualizer.py',
@@ -428,7 +425,11 @@ def generate_launch_description():
                     'launch', 'auto.launch.py')
             ),
             launch_arguments={
-                'lidar_serial_port': LaunchConfiguration('lidar_serial_port'),
+                'lidar_serial_port':    LaunchConfiguration('lidar_serial_port'),
+                'ref_sys_topic':        ref_sys_topic,
+                'center_weight':        str(center_weight),
+                'priority_class_bonus': str(priority_class_bonus),
+                'priority_class_ids':   str(priority_class_ids),
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
         )
