@@ -1,9 +1,13 @@
 # realsense_640x480x60.yaml
 #
-# Color 60 fps, depth 30 fps — depth halved to avoid USB 3.x bandwidth
-# issues (UVC watchdog / "Depth stream start failure") on constrained
-# controllers. Revert depth_module profile to '640x480x60' if yours has
-# no issues at 60+60.
+# Color 60 fps, depth 60 fps -- both streams run at the file's namesake
+# rate. Not yet re-verified against the USB 3.x bandwidth / UVC watchdog
+# ("Depth stream start failure") issue that motivated halving depth to
+# 30fps in an earlier revision (checked 2026-07-29: this file's
+# depth_module.profile was already '640x480x60', the halving was never
+# actually applied here despite the comment claiming it was). If the UVC
+# watchdog reappears on real hardware, drop depth_module.profile back to
+# '640x480x30' and update this comment again.
 # see README.md for the frame-rate-split rationale
 
 rgb_camera:
