@@ -155,15 +155,14 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
   → dnn_image_encoder (resize 640×480 → 640×640, normalise, interleave→planar)
   → /tensor_pub → tensor_rt (TensorRT YOLOv8 inference)
   → /tensor_sub → yolov8_decoder_node
-  → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space)
-  → detection_picker_node  (filters out allied-team classes using the
-                            referee team colour, picks best, scales bbox to
-                            color image space)
-  → /roi  (Detection2D, bbox in 640×480 COLOR image space)
-  → roi_depth_node  (LUT lookup + center-sample depth, deprojects bbox
-                      corners + center)
-  → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: 4 corners +
-                           center + depth + confidence, REP-103 camera frame)
+  → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space, ALL detections)
+  → roi_depth_node  (scales each bbox to color space, LUT lookup +
+                      center-sample depth, deprojects bbox corners + center)
+  → /cv/panel_detections  (dji_serial_bridge/msg/PanelDetectionArray, REP-103
+                            camera frame, one entry per detection)
+  → target_selector.py  (sentry_pkg package — team filter, 3D robot
+                          grouping, per-frame panel pick)
+  → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: the winner)
   → point_to_cv_target_node  (sentry_pkg package — frame convert; also
                                republishes /cv/panel_polygon for
                                visualization)
@@ -171,7 +170,7 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
   → dji_serial_bridge_node  → UART → MCB / gimbal controller
 ```
 
-**Team-colour filtering:** `detection_picker_node` subscribes to the referee system status published by `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`). Blue team excludes class IDs 0–3, red team excludes 4–7. Until the first status arrives, all detections pass through (with a throttled warning).
+**Team-colour filtering:** `target_selector.py` (in `sentry_pkg`, launched from `auto.launch.py`) subscribes to the referee system status published by `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`). Blue team excludes class IDs 0–3, red team excludes 4–7. Until the first status arrives, all detections pass through (with a throttled warning).
 
 Set `enable_serial_bridge:=false` to omit the last two nodes (e.g. when bench-testing the vision pipeline without the MCB attached).
 
