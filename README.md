@@ -21,7 +21,7 @@ TensorRTNode                    (GPU, NITROS zero-copy internally)
 YoloV8DecoderNode
 ```
 
-There are **two** distinct copy events to reason about separately:
+There are two distinct copy events to reason about separately:
 
 ## 2. Copy A: ROS 2 middleware copy (realsense → encoder)
 
@@ -31,9 +31,9 @@ it.
 
 | Scenario | What happens to the bytes |
 |---|---|
-| **Separate processes / containers** | rmw serialises the vector into a DDS loan buffer; subscriber deserialises into a new `vector`. **One full memcpy on the CPU.** |
-| **Same container, IPC disabled** | rclcpp still serialises/deserialises even intra-process. **Same full copy.** |
-| **Same container, IPC enabled** | rclcpp hands the publisher's `shared_ptr<Image>` directly to the subscriber. **Zero copy.** The subscriber receives a `const shared_ptr<Image>`. |
+| Separate processes / containers | rmw serialises the vector into a DDS loan buffer; the subscriber deserialises into a new `vector`. One full memcpy on the CPU. |
+| Same container, IPC disabled | rclcpp still serialises/deserialises even intra-process. Same full copy. |
+| Same container, IPC enabled | rclcpp hands the publisher's `shared_ptr<Image>` directly to the subscriber, with no copy. The subscriber receives a `const shared_ptr<Image>`. |
 
 ### How to enable IPC (what the launch file does)
 
@@ -49,16 +49,17 @@ ComposableNode(
 realsense-ros already supports IPC (it ships `rs_intra_process_demo_launch.py`,
 and `image_publisher.cpp` uses `rclcpp::Publisher` normally). The
 dnn_image_encoder `ResizeNode` is a standard rclcpp composable node, so in
-the same `component_container_mt` with IPC enabled rclcpp hands it the
-**same `shared_ptr`**.
+the same `component_container_mt` with IPC enabled rclcpp hands it the same
+`shared_ptr`.
 
-> **Status: ELIMINATED** by the accompanying launch file.
+> Status: eliminated by the accompanying launch file.
 
 ## 3. Copy B: cudaMemcpyDefault (CPU → GPU, inside dnn_image_encoder)
 
 ### What actually happens
 
-Inside `dnn_image_encoder` / `custom_nitros_dnn_image_encoder::ImageEncoderNode::InputCallback`:
+Inside `dnn_image_encoder` /
+`custom_nitros_dnn_image_encoder::ImageEncoderNode::InputCallback`:
 
 ```cpp
 cudaMemcpy(
@@ -69,7 +70,9 @@ cudaMemcpy(
 );
 ```
 
-This is a **host-to-device transfer**.  Even with IPC eliminating Copy A, the image data still lives in CPU RAM (the `Image::data` vector) and must be transferred to GPU for CUDA/TensorRT processing.
+This is a host-to-device transfer. Even with IPC eliminating Copy A, the
+image data still lives in CPU RAM (the `Image::data` vector) and has to be
+transferred to GPU for CUDA/TensorRT processing.
 
 ### Can it be eliminated?
 
@@ -84,7 +87,7 @@ Not on the current realsense-ros architecture:
 3. Unified/pinned memory reduces the *cost* of Copy B but can't remove it.
    The data originates in a kernel DMA buffer that isn't a CUDA allocation.
 
-NITROS's "zero-copy" claim applies **between NITROS nodes** (encoder →
+NITROS's "zero-copy" claim applies between NITROS nodes (encoder →
 TensorRT → decoder), where both sides share a GXF `VideoBuffer` backed by a
 CUDA allocation and the pointer passes directly. That's separate from the
 CPU→GPU transfer, which still has to happen once.
@@ -94,11 +97,18 @@ CPU→GPU transfer, which still has to happen once.
 To remove the H2D transfer, realsense-ros would need to:
 
 1. Allocate a CUDA pinned buffer (`cudaHostAlloc`) of sufficient size for a color frame.
-2. Use `rs2::frame::get_data()` to get the librealsense frame pointer, then copy into the pinned buffer (or use a custom allocator if librealsense ever supports pluggable allocators).
-3. Publish a `NitrosImage` wrapping a `NitrosImageBuilder().WithGpuData(pinned_ptr)` (pinned memory is accessible to CUDA kernels as device memory via UVA).
+2. Use `rs2::frame::get_data()` to get the librealsense frame pointer, then
+   copy into the pinned buffer (or use a custom allocator if librealsense ever
+   supports pluggable allocators).
+3. Publish a `NitrosImage` wrapping a
+   `NitrosImageBuilder().WithGpuData(pinned_ptr)` (pinned memory is accessible
+   to CUDA kernels as device memory via UVA).
 4. Load the `NitrosTypeManager` and use `ManagedNitrosPublisher<NitrosImage>`.
 
-This is exactly what `gpu_image_builder_node.cpp` in the `custom_nitros_image` example demonstrates, minus the librealsense integration. A prototype bridge node could be written using that example as a template.
+This is exactly what `gpu_image_builder_node.cpp` in the
+`custom_nitros_image` example demonstrates, minus the librealsense
+integration. A prototype bridge node could be written using that example as
+a template.
 
 ## 5. IPC compatibility
 
@@ -114,8 +124,8 @@ Both the `custom_nitros_dnn_image_encoder` example and the
 all cvcuda operations. Against a NITROS node using its own stream pool, the
 implicit synchronisation on stream 0 is safe but not optimal. Sharing a
 stream via the GXF `CudaStreamPool` would be faster, but needs the encoder
-to accept a `CudaStreamHandle` -- not addressed by the existing launch
-fragment.
+to accept a `CudaStreamHandle`, which the existing launch fragment does not
+do.
 
 ## 7. Summary
 
@@ -132,7 +142,10 @@ Trimmed-out detail from in-code comments, kept here for reference.
 
 ### `launch/isaac_ros_yolov8_realsense.launch.py`
 
-**Verified runtime topic layout** (with `ComposableNode(name='camera', namespace='')`, realsense-ros resolves all topics against the root namespace, and there is NO `/camera/` prefix):
+#### Verified runtime topic layout
+
+With `ComposableNode(name='camera', namespace='')`, realsense-ros resolves
+all topics against the root namespace, and there is NO `/camera/` prefix:
 
 ```
 /color/image_raw               → dnn_image_encoder
@@ -142,9 +155,11 @@ Trimmed-out detail from in-code comments, kept here for reference.
 /extrinsics/depth_to_color     → extrinsics_relay_node → roi_depth_node params
 ```
 
-If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics gain a `/camera/` prefix and these constants must be updated to match.
+If you launch with an explicit namespace (e.g. `namespace='camera'`), all
+topics gain a `/camera/` prefix and these constants must be updated to
+match.
 
-**Full inference chain:**
+#### Full inference chain
 
 ```
 /color/image_raw
@@ -168,13 +183,22 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
   → dji_serial_bridge_node  → UART → MCB / gimbal controller
 ```
 
-**Team-colour filtering:** `target_selector.py` (in `sentry_pkg`, launched from `auto.launch.py`) subscribes to the referee system status published by `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`). Blue team excludes class IDs 0–3, red team excludes 4–7. Until the first status arrives, all detections pass through (with a throttled warning).
+#### Team-colour filtering
 
-Set `enable_serial_bridge:=false` to omit the last two nodes (e.g. when bench-testing the vision pipeline without the MCB attached).
+`target_selector.py` (in `sentry_pkg`, launched from `auto.launch.py`)
+subscribes to the referee system status published by
+`dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`).
+Blue team excludes class IDs 0-3, red team excludes 4-7. Until the first
+status arrives, all detections pass through, with a throttled warning.
 
-**Usage.** Only `engine_file_path` is required; everything else has a
-default. Pass args as plain `name:=value` -- bracketing one makes the
-token part of the *name*, so the override is silently ignored.
+Set `enable_serial_bridge:=false` to omit the last two nodes, for example
+when bench-testing the vision pipeline without the MCB attached.
+
+#### Usage
+
+Only `engine_file_path` is required; everything else has a default. Pass
+args as plain `name:=value`, since bracketing one makes the token part of
+the *name* and the override is then silently ignored.
 `priority_class_ids:=[2,6]` is the sole exception, where the brackets are
 the list value.
 
@@ -187,19 +211,38 @@ ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py 
 
 ### `src/image_snapshot_node.cpp`
 
-`rclcpp::Subscription::take()` in Humble (and Galactic) accepts a value reference (`ROSMessageType&`), not a `SharedPtr`. The message is moved into a `shared_ptr` before being passed to `cv_bridge` so `toCvShare` can alias the buffer without a pixel copy. The `SharedPtr` overload was added in Iron.
+`rclcpp::Subscription::take()` in Humble (and Galactic) accepts a value
+reference (`ROSMessageType&`), not a `SharedPtr`. The message is moved into
+a `shared_ptr` before being passed to `cv_bridge` so `toCvShare` can alias
+the buffer without a pixel copy. The `SharedPtr` overload was added in Iron.
 
 ### `src/nitros_realsense_bridge_node.cpp`
 
-This is the bridge node described in section 4 above, a drop-in replacement for the realsense→dnn_image_encoder connection.
+This is the bridge node described in section 4 above, a drop-in replacement
+for the realsense→dnn_image_encoder connection.
 
-librealsense does not support pluggable allocators, so this node still pays one `cudaMemcpyHostToDevice`. What it saves versus the stock encoder:
+librealsense does not support pluggable allocators, so this node still pays
+one `cudaMemcpyHostToDevice`. What it saves versus the stock encoder:
 
 - No intermediate CPU resize (the raw frame is pushed to GPU, then resized on GPU).
-- The frame sits in pinned memory so the H2D transfer can be DMA-pipelined while the GPU is busy with the previous frame's inference.
+- The frame sits in pinned memory so the H2D transfer can be DMA-pipelined
+  while the GPU is busy with the previous frame's inference.
 
-For a truly zero-copy path, realsense-ros would need to allocate its image buffers in CUDA pinned memory from the start, which requires patching librealsense's frame allocator.
+For a truly zero-copy path, realsense-ros would need to allocate its image
+buffers in CUDA pinned memory from the start, which requires patching
+librealsense's frame allocator.
 
 ### `config/realsense_640x480x60.yaml`
 
-Both streams run at 60 fps (checked 2026-07-29: `depth_module.profile` is `640x480x60`, matching the filename). An earlier revision of this file described a 30fps depth cap, but that halving was never actually present in the config; the paragraph was simply stale. `roi_depth_node` drives off `/detections_output` and only caches the latest depth frame, so it genuinely samples depth on detection events rather than every depth frame. That doesn't require lowering depth's own publish rate, since the node isn't reacting to every depth frame regardless of what rate it arrives at. If the UVC watchdog / "Depth stream start failure" reappears on bandwidth-constrained USB controllers at 60+60, cap `depth_module.profile` back to `640x480x30` in the yaml: that reduces USB bandwidth, not detection-processing load.
+Both streams run at 60 fps (checked 2026-07-29: `depth_module.profile` is
+`640x480x60`, matching the filename). An earlier revision of this file
+described a 30fps depth cap, but that halving was never actually present in
+the config; the paragraph was simply stale. `roi_depth_node` drives off
+`/detections_output` and only caches the latest depth frame, so it genuinely
+samples depth on detection events rather than every depth frame. That
+doesn't require lowering depth's own publish rate, since the node isn't
+reacting to every depth frame regardless of what rate it arrives at. If the
+UVC watchdog / "Depth stream start failure" reappears on
+bandwidth-constrained USB controllers at 60+60, cap `depth_module.profile`
+back to `640x480x30` in the yaml: that reduces USB bandwidth, not
+detection-processing load.
