@@ -1,11 +1,12 @@
 # realsense-yolov8-nitros-bridge
-Node and launchfile implementing optimizations at interface between realsense node and yolov8 isaac-ros-3.2 example
 
-# RealSense → Isaac ROS NITROS: Copy Boundary Analysis & Elimination Path
+Node and launch file optimising the interface between the realsense node
+and the isaac-ros-3.2 yolov8 example. Most of this README is the copy-
+boundary analysis behind those optimisations.
 
-## 1. The problem, precisely stated
+## 1. The problem
 
-The standard `yolov8_tensor_rt.launch.py` pipeline looks like this:
+The standard `yolov8_tensor_rt.launch.py` pipeline:
 
 ```
 realsense2_camera node          (publishes sensor_msgs/Image)
@@ -22,14 +23,11 @@ YoloV8DecoderNode
 
 There are **two** distinct copy events to reason about separately:
 
----
-
 ## 2. Copy A: ROS 2 middleware copy (realsense → encoder)
 
-### What actually happens
-
-`sensor_msgs/Image` carries a `std::vector<uint8_t> data` field.  
-The realsense-ros node wraps each librealsense frame in an `Image` and **publishes** it.
+`sensor_msgs/Image` carries a `std::vector<uint8_t> data` field, and the
+realsense-ros node wraps each librealsense frame in an `Image` to publish
+it.
 
 | Scenario | What happens to the bytes |
 |---|---|
@@ -48,13 +46,13 @@ ComposableNode(
 )
 ```
 
-The realsense-ros node already supports IPC. It has a dedicated demo launch (`rs_intra_process_demo_launch.py`), and `image_publisher.cpp` uses `rclcpp::Publisher` normally, so IPC just works.
-
-The dnn_image_encoder `ResizeNode` is a standard rclcpp composable node that subscribes to `sensor_msgs/Image`.  When it lives in the same `component_container_mt` with IPC enabled, rclcpp will hand it the **same `shared_ptr`** the realsense node created. **No copy.**
+realsense-ros already supports IPC (it ships `rs_intra_process_demo_launch.py`,
+and `image_publisher.cpp` uses `rclcpp::Publisher` normally). The
+dnn_image_encoder `ResizeNode` is a standard rclcpp composable node, so in
+the same `component_container_mt` with IPC enabled rclcpp hands it the
+**same `shared_ptr`**.
 
 > **Status: ELIMINATED** by the accompanying launch file.
-
----
 
 ## 3. Copy B: cudaMemcpyDefault (CPU → GPU, inside dnn_image_encoder)
 
@@ -75,19 +73,21 @@ This is a **host-to-device transfer**.  Even with IPC eliminating Copy A, the im
 
 ### Can it be eliminated?
 
-The current realsense-ros architecture doesn't support this, for three reasons:
+Not on the current realsense-ros architecture:
 
-1. librealsense frames live in CPU-accessible memory, allocated by the UVC/USB driver subsystem. There is no zero-copy path from the camera USB buffer to GPU memory without an explicit `cudaMemcpy`.
+1. librealsense frames live in CPU-accessible memory allocated by the
+   UVC/USB driver subsystem. There's no zero-copy path from the camera USB
+   buffer to GPU memory without an explicit `cudaMemcpy`.
+2. realsense-ros publishes `sensor_msgs/Image`, not `NitrosImage`. Until
+   someone writes a plugin wrapping librealsense frames in a GXF
+   `VideoBuffer` behind the NITROS type adapter, Copy B is unavoidable.
+3. Unified/pinned memory reduces the *cost* of Copy B but can't remove it.
+   The data originates in a kernel DMA buffer that isn't a CUDA allocation.
 
-2. realsense-ros does not publish `NitrosImage`. It publishes `sensor_msgs/Image`, whose `data` field is a CPU `std::vector`. Until NVIDIA or the Intel team writes a realsense-ros plugin that wraps librealsense frames in a GXF `VideoBuffer` and publishes them through the NITROS type adapter, Copy B is unavoidable.
-
-3. CUDA Unified Memory / pinned memory can reduce the *cost* of Copy B but cannot eliminate it. The camera data originates in a kernel DMA buffer that is not a CUDA allocation.
-
-### What NITROS zero-copy actually covers
-
-The "zero-copy" claim in NITROS applies **between NITROS nodes** (encoder → TensorRT → decoder). The `NitrosImage` and `NitrosTensorList` types use a GXF `VideoBuffer` backed by a CUDA allocation. When both publisher and subscriber are NITROS nodes in the same GXF context, the buffer pointer is passed directly, with **no copy**. This is separate from the CPU→GPU transfer that must still happen once.
-
----
+NITROS's "zero-copy" claim applies **between NITROS nodes** (encoder →
+TensorRT → decoder), where both sides share a GXF `VideoBuffer` backed by a
+CUDA allocation and the pointer passes directly. That's separate from the
+CPU→GPU transfer, which still has to happen once.
 
 ## 4. The only real path to eliminating Copy B
 
@@ -100,35 +100,31 @@ To remove the H2D transfer, realsense-ros would need to:
 
 This is exactly what `gpu_image_builder_node.cpp` in the `custom_nitros_image` example demonstrates, minus the librealsense integration. A prototype bridge node could be written using that example as a template.
 
----
+## 5. IPC compatibility
 
-## 5. Practical IPC compatibility matrix
+`realsense2_camera` supports IPC but not NITROS; the three downstream nodes
+(`dnn_image_encoder`, `TensorRTNode`, `YoloV8DecoderNode`) are NITROS. All
+four have to share a container for any of this to apply, and the launch
+file puts them in one `component_container_mt`.
 
-| Component | IPC | NITROS | In same container? |
-|---|---|---|---|
-| `realsense2_camera` | ✅ yes | ❌ no | ✅ required for IPC |
-| `dnn_image_encoder` nodes | ✅ yes (input) | ✅ yes (output) | ✅ required |
-| `TensorRTNode` | N/A | ✅ yes | ✅ required |
-| `YoloV8DecoderNode` | N/A | ✅ yes (input) | ✅ required |
+## 6. CUDA stream ordering
 
-The launch file places all four in a single `component_container_mt`.
-
----
-
-## 6. CUDA stream ordering note
-
-The `custom_nitros_dnn_image_encoder` example passes `(cudaStream_t) 0` (the default stream) to all cvcuda operations.  The `dnn_image_encoder` package similarly uses a single stream.  When combined with a NITROS node that uses its own CUDA stream pool, the implicit synchronisation on stream 0 is safe but not optimal.  For maximum throughput, the encoder and TensorRT node should share a stream via the GXF `CudaStreamPool`.  This is not addressed by the existing `dnn_image_encoder` launch fragment and would require modifying the encoder to accept a GXF `CudaStreamHandle`.
-
----
+Both the `custom_nitros_dnn_image_encoder` example and the
+`dnn_image_encoder` package pass the default stream (`(cudaStream_t) 0`) to
+all cvcuda operations. Against a NITROS node using its own stream pool, the
+implicit synchronisation on stream 0 is safe but not optimal. Sharing a
+stream via the GXF `CudaStreamPool` would be faster, but needs the encoder
+to accept a `CudaStreamHandle` -- not addressed by the existing launch
+fragment.
 
 ## 7. Summary
 
-| Copy | Location | Eliminated by this PR? | How |
-|---|---|---|---|
-| A: CPU → CPU (DDS) | rclcpp publish/subscribe | **Yes** | IPC in shared container |
-| B: CPU → GPU (H2D) | `cudaMemcpyDefault` in encoder | **No** | Requires NitrosImage-native realsense driver |
-
-The launch file in `isaac_ros_yolov8_realsense.launch.py` is the best achievable with the current open-source stack: Copy A is removed via IPC; Copy B is the one unavoidable H2D transfer, occurring once per frame as data enters the GPU pipeline.
+`isaac_ros_yolov8_realsense.launch.py` is the best achievable on the
+current open-source stack. Copy A (CPU→CPU, in rclcpp publish/subscribe) is
+gone, via IPC in a shared container. Copy B (CPU→GPU, the
+`cudaMemcpyDefault` in the encoder) remains: eliminating it needs a
+NitrosImage-native realsense driver. It happens once per frame as data
+enters the GPU pipeline.
 
 ## Notes
 
@@ -163,10 +159,12 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
   → target_selector.py  (sentry_pkg package, does team filter, 3D robot
                           grouping, per-frame panel pick)
   → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: the winner)
-  → point_to_cv_target_node  (sentry_pkg package, frame convert; also
-                               republishes /cv/panel_polygon for
-                               visualization)
-  → /cv_target  (dji_serial_bridge/msg/CVTarget)
+  → target_tracker.py  (sentry_pkg, spin-centre KF estimate in odom)
+  → /cv/target_state  (dji_serial_bridge/msg/TargetState)
+  → point_to_cv_target_node  (sentry_pkg, converts to root frame, optional
+                               lead solve; also republishes
+                               /cv/panel_polygon for visualization)
+  → /cv/target  (dji_serial_bridge/msg/CVTarget)
   → dji_serial_bridge_node  → UART → MCB / gimbal controller
 ```
 
@@ -174,19 +172,17 @@ If you launch with an explicit namespace (e.g. `namespace='camera'`), all topics
 
 Set `enable_serial_bridge:=false` to omit the last two nodes (e.g. when bench-testing the vision pipeline without the MCB attached).
 
-**Usage example**: every argument besides `engine_file_path` has a default; pass args as plain `name:=value` pairs (do not bracket them, or the token becomes part of the name and the override is silently ignored; `priority_class_ids:=[2,6]` is the sole exception, where the brackets are the list value itself):
+**Usage.** Only `engine_file_path` is required; everything else has a
+default. Pass args as plain `name:=value` -- bracketing one makes the
+token part of the *name*, so the override is silently ignored.
+`priority_class_ids:=[2,6]` is the sole exception, where the brackets are
+the list value.
 
-```
+```bash
 ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
     engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
-    num_classes:=8 \
-    confidence_threshold:=0.25 nms_threshold:=0.45 \
-    center_sample_fraction:=0.25 \
-    center_weight:=1.0 priority_class_bonus:=0.5 priority_class_ids:=[2,6] \
-    ref_sys_topic:=/dji_serial_bridge/ref_sys \
-    serial_device:=/dev/ttyTHS1 serial_baudrate:=115200 \
-    enable_sentry_pkg:=True lidar_serial_port:=/dev/ttyUSB0 enable_rviz:=False \
-    enable_snapshot:=False snapshot_output_dir:=/data/realsense-captures
+    num_classes:=8 confidence_threshold:=0.25 nms_threshold:=0.45 \
+    priority_class_ids:=[2,6] serial_device:=/dev/ttyTHS1
 ```
 
 ### `src/image_snapshot_node.cpp`
@@ -206,4 +202,4 @@ For a truly zero-copy path, realsense-ros would need to allocate its image buffe
 
 ### `config/realsense_640x480x60.yaml`
 
-Both streams run at 60 fps (checked 2026-07-29: `depth_module.profile` is `640x480x60`, matching the filename). An earlier revision of this file described a 30fps depth cap, but that halving was never actually present in the config; the paragraph was simply stale. `roi_depth_node` drives off `/detections_output` and only caches the latest depth frame (Phase 0 of the CV tracking plan), so it genuinely samples depth on detection events rather than every depth frame. That doesn't require lowering depth's own publish rate, since the node isn't reacting to every depth frame regardless of what rate it arrives at. If the UVC watchdog / "Depth stream start failure" reappears on bandwidth-constrained USB controllers at 60+60, cap `depth_module.profile` back to `640x480x30` in the yaml: that reduces USB bandwidth, not detection-processing load.
+Both streams run at 60 fps (checked 2026-07-29: `depth_module.profile` is `640x480x60`, matching the filename). An earlier revision of this file described a 30fps depth cap, but that halving was never actually present in the config; the paragraph was simply stale. `roi_depth_node` drives off `/detections_output` and only caches the latest depth frame, so it genuinely samples depth on detection events rather than every depth frame. That doesn't require lowering depth's own publish rate, since the node isn't reacting to every depth frame regardless of what rate it arrives at. If the UVC watchdog / "Depth stream start failure" reappears on bandwidth-constrained USB controllers at 60+60, cap `depth_module.profile` back to `640x480x30` in the yaml: that reduces USB bandwidth, not detection-processing load.
