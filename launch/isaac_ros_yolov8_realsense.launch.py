@@ -88,7 +88,7 @@ def generate_launch_description():
                         '-- target_selector.py has its own min_score param, '
                         'set separately via auto.launch.py'),
         DeclareLaunchArgument('ref_sys_topic', default_value='/dji_serial_bridge/ref_sys',
-            description='RefSysStatus topic sentry_pkg/target_selector.py reads '
+            description='RefSysStatus topic thornbots_pkg/target_selector.py reads '
                         'to learn the referee team colour for allied-detection '
                         'filtering. Must match dji_serial_bridge_node\'s ~/ref_sys '
                         'output (node name "dji_serial_bridge", so '
@@ -110,8 +110,8 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
             description='Within the serial bridge launch, also launch the '
                         '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
-        DeclareLaunchArgument('enable_sentry_pkg', default_value='True',
-            description='Also launch the sentry_pkg navigation/SLAM stack '
+        DeclareLaunchArgument('enable_thornbots_pkg', default_value='True',
+            description='Also launch the thornbots_pkg navigation/SLAM stack '
                         '(auto.launch.py). Set False to run vision only.'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
             description='Launch detection_picker_visualizer.py: overlays the '
@@ -121,7 +121,7 @@ def generate_launch_description():
                         '/yolov8_processed_image. For bench debugging.'),
         DeclareLaunchArgument('lidar_serial_port', default_value='/dev/ttyUSB0',
             description='Serial device path for the SLLIDAR, forwarded to '
-                        'sentry_pkg auto.launch.py. Inside the Isaac ROS '
+                        'thornbots_pkg auto.launch.py. Inside the Isaac ROS '
                         'container the hotplug USB lidar is read via the '
                         '/host-dev bind, e.g. /host-dev/ttyUSB0.'),
         DeclareLaunchArgument('debug_log', default_value='True',
@@ -260,7 +260,7 @@ def generate_launch_description():
         # Driven directly by /detections_output (network space) -- it scales
         # each bbox to color space and deprojects internally, emitting ALL
         # detections on /cv/panel_detections. Team filtering/picking moved
-        # downstream to sentry_pkg's target_selector.py (post-depth, 3D).
+        # downstream to thornbots_pkg's target_selector.py (post-depth, 3D).
         roi_depth_node = ComposableNode(
             package='roi_depth_query',
             plugin='roi_depth_query::RoiDepthNode',
@@ -371,8 +371,8 @@ def generate_launch_description():
         # point_to_cv_target_node (converts target_selector.py's picked
         # /cv/panel_detection, itself grouped from roi_depth_node's
         # /cv/panel_detections, into the CVTarget message the bridge expects)
-        # is launched separately by sentry_pkg's auto.launch.py below, via
-        # enable_sentry_pkg. dji_bridge.launch.py itself only declares
+        # is launched separately by thornbots_pkg's auto.launch.py below, via
+        # enable_thornbots_pkg. dji_bridge.launch.py itself only declares
         # device/baudrate/debug_log/params_file -- enable_cv_target_bridge,
         # roi_point_topic, roi_topic, cv_target_topic below are not read by
         # it (pre-existing, not touched here).
@@ -418,10 +418,10 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('enable_visualizer')),
         )
 
-        sentry_pkg = IncludeLaunchDescription(
+        thornbots_pkg = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
-                    get_package_share_directory('sentry_pkg'),
+                    get_package_share_directory('thornbots_pkg'),
                     'launch', 'auto.launch.py')
             ),
             launch_arguments={
@@ -431,9 +431,9 @@ def generate_launch_description():
                 'priority_class_bonus': str(priority_class_bonus),
                 'priority_class_ids':   str(priority_class_ids),
             }.items(),
-            condition=IfCondition(LaunchConfiguration('enable_sentry_pkg')),
+            condition=IfCondition(LaunchConfiguration('enable_thornbots_pkg')),
         )
         return [container, yolov8_encoder_launch, extrinsics_relay,
-                visualizer, serial_bridge, sentry_pkg]
+                visualizer, serial_bridge, thornbots_pkg]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
