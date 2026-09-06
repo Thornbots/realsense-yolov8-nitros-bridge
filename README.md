@@ -171,12 +171,12 @@ match.
                       center-sample depth, deprojects bbox corners + center)
   → /cv/panel_detections  (dji_serial_bridge/msg/PanelDetectionArray, REP-103
                             camera frame, one entry per detection)
-  → target_selector.py  (sentry_pkg package, does team filter, 3D robot
+  → target_selector.py  (thornbots_pkg package, does team filter, 3D robot
                           grouping, per-frame panel pick)
   → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: the winner)
-  → target_tracker.py  (sentry_pkg, spin-centre KF estimate in odom)
+  → target_tracker.py  (thornbots_pkg, spin-centre KF estimate in odom)
   → /cv/target_state  (dji_serial_bridge/msg/TargetState)
-  → point_to_cv_target_node  (sentry_pkg, converts to root frame, optional
+  → point_to_cv_target_node  (thornbots_pkg, converts to root frame, optional
                                lead solve; also republishes
                                /cv/panel_polygon for visualization)
   → /cv/target  (dji_serial_bridge/msg/CVTarget)
@@ -185,7 +185,7 @@ match.
 
 #### Team-colour filtering
 
-`target_selector.py` (in `sentry_pkg`, launched from `auto.launch.py`)
+`target_selector.py` (in `thornbots_pkg`, launched from `auto.launch.py`)
 subscribes to the referee system status published by
 `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`).
 Blue team excludes class IDs 0-3, red team excludes 4-7. Until the first
