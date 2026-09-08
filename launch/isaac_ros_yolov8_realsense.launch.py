@@ -110,20 +110,12 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
             description='Within the serial bridge launch, also launch the '
                         '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
-        DeclareLaunchArgument('enable_thornbots_pkg', default_value='True',
-            description='Also launch the thornbots_pkg navigation/SLAM stack '
-                        '(auto.launch.py). Set False to run vision only.'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
             description='Launch detection_picker_visualizer.py: overlays the '
                         'picker\'s scoring factors (conf/centrality/priority/'
                         'team-exclusion/score) on the network-space resize image '
                         'and tags the detection the picker would pick. Publishes '
                         '/yolov8_processed_image. For bench debugging.'),
-        DeclareLaunchArgument('lidar_serial_port', default_value='/dev/ttyUSB0',
-            description='Serial device path for the SLLIDAR, forwarded to '
-                        'thornbots_pkg auto.launch.py. Inside the Isaac ROS '
-                        'container the hotplug USB lidar is read via the '
-                        '/host-dev bind, e.g. /host-dev/ttyUSB0.'),
         DeclareLaunchArgument('debug_log', default_value='True',
             description='Enable for lots more logs' ),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
@@ -418,22 +410,7 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('enable_visualizer')),
         )
 
-        thornbots_pkg = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(
-                    get_package_share_directory('thornbots_pkg'),
-                    'launch', 'auto.launch.py')
-            ),
-            launch_arguments={
-                'lidar_serial_port':    LaunchConfiguration('lidar_serial_port'),
-                'ref_sys_topic':        ref_sys_topic,
-                'center_weight':        str(center_weight),
-                'priority_class_bonus': str(priority_class_bonus),
-                'priority_class_ids':   str(priority_class_ids),
-            }.items(),
-            condition=IfCondition(LaunchConfiguration('enable_thornbots_pkg')),
-        )
         return [container, yolov8_encoder_launch, extrinsics_relay,
-                visualizer, serial_bridge, thornbots_pkg]
+                visualizer, serial_bridge]
 
     return launch.LaunchDescription(launch_args + [OpaqueFunction(function=create_nodes)])
