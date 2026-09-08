@@ -9,10 +9,11 @@ the current shape is the conclusion of that analysis, not an accident.
 **The ROS package name is `realsense_yolov8_nitros_bridge`, not the directory
 name** — `--packages-select realsense-yolov8-nitros-bridge` selects nothing.
 
-**Shadowed by `/workspaces/ros2_ws`** (`Dockerfile.thornbots`, `RECLONE_BRIDGE`
-— the last and most volatile layer, so bumping it is the cheapest rebuild). Once
-built locally, a `src/` edit is live under `dexec.sh` but not in the user's
-terminal. Confirm with
+**Shadowed by `/workspaces/ros2_ws`** (`Dockerfile.thornbots` LAYER 5 copies
+this directory in and builds it alongside our six other packages; editing it
+rebuilds all seven, so iterate with `colcon build` in the container instead).
+Once built locally, a `src/` edit is live under `dexec.sh` but not in the
+user's terminal. Confirm with
 `../isaac_ros_common/scripts/dexec.sh -- ros2 pkg prefix realsense_yolov8_nitros_bridge`.
 C++, so a source change always needs a rebuild; `--symlink-install` won't help.
 
