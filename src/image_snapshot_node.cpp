@@ -1,3 +1,17 @@
+// Copyright 2026 Thornbots
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // image_snapshot_node.cpp
 //
 // Timer-driven training image capture with disk-space guardrail.
@@ -29,16 +43,18 @@ public:
   explicit ImageSnapshotNode(const rclcpp::NodeOptions & options)
   : Node("image_snapshot", options), save_count_(0)
   {
-    declare_parameter("output_dir",           std::string("/workspaces/isaac_ros-dev/data/realsense-captures"));
-    declare_parameter("interval_ms",          500);
-    declare_parameter("format",               std::string("jpg"));
-    declare_parameter("disk_limit_pct",       75.0);
-    declare_parameter("disk_check_interval",  20);   // check every N saves
+    declare_parameter(
+      "output_dir",
+      std::string("/workspaces/isaac_ros-dev/data/realsense-captures"));
+    declare_parameter("interval_ms", 500);
+    declare_parameter("format", std::string("jpg"));
+    declare_parameter("disk_limit_pct", 75.0);
+    declare_parameter("disk_check_interval", 20);    // check every N saves
 
-    output_dir_          = get_parameter("output_dir").as_string();
-    format_              = get_parameter("format").as_string();
-    interval_ms_         = get_parameter("interval_ms").as_int();
-    disk_limit_pct_      = get_parameter("disk_limit_pct").as_double();
+    output_dir_ = get_parameter("output_dir").as_string();
+    format_ = get_parameter("format").as_string();
+    interval_ms_ = get_parameter("interval_ms").as_int();
+    disk_limit_pct_ = get_parameter("disk_limit_pct").as_double();
     disk_check_interval_ = get_parameter("disk_check_interval").as_int();
 
     // Create the output directory before the disk check so space() has
@@ -76,7 +92,8 @@ public:
         }
       });
 
-    RCLCPP_INFO(get_logger(),
+    RCLCPP_INFO(
+      get_logger(),
       "ImageSnapshotNode ready — writing %s to '%s' every %d ms (disk limit %.0f%%)",
       format_.c_str(), output_dir_.c_str(), interval_ms_, disk_limit_pct_);
   }
@@ -88,9 +105,9 @@ private:
   {
     auto sp = std::filesystem::space(output_dir_);
     // space().capacity can be 0 on some virtual filesystems; guard against /0.
-    if (sp.capacity == 0) { return 0.0; }
+    if (sp.capacity == 0) {return 0.0;}
     return 100.0 * (1.0 - static_cast<double>(sp.available) /
-                           static_cast<double>(sp.capacity));
+           static_cast<double>(sp.capacity));
   }
 
   void check_disk_or_throw() const
@@ -98,10 +115,10 @@ private:
     double pct = used_pct();
     if (pct > disk_limit_pct_) {
       throw std::runtime_error(
-        "ImageSnapshotNode: disk at '" + output_dir_ + "' is " +
-        std::to_string(static_cast<int>(pct)) + "% full " +
-        "(limit: " + std::to_string(static_cast<int>(disk_limit_pct_)) + "%). "
-        "Free space or set a different output_dir / disk_limit_pct.");
+              "ImageSnapshotNode: disk at '" + output_dir_ + "' is " +
+              std::to_string(static_cast<int>(pct)) + "% full " +
+              "(limit: " + std::to_string(static_cast<int>(disk_limit_pct_)) + "%). "
+              "Free space or set a different output_dir / disk_limit_pct.");
     }
   }
 
@@ -114,14 +131,16 @@ private:
     if (++save_count_ % disk_check_interval_ == 0) {
       double pct = used_pct();
       if (pct > disk_limit_pct_) {
-        RCLCPP_ERROR(get_logger(),
+        RCLCPP_ERROR(
+          get_logger(),
           "Disk %.1f%% full (limit %.0f%%) — stopping capture. "
           "Free space and restart the node to resume.",
           pct, disk_limit_pct_);
         timer_->cancel();
         return;
       }
-      RCLCPP_DEBUG(get_logger(), "Disk %.1f%% used after %zu saves",
+      RCLCPP_DEBUG(
+        get_logger(), "Disk %.1f%% used after %zu saves",
         pct, save_count_);
     }
 
@@ -149,9 +168,9 @@ private:
 
   std::string output_dir_;
   std::string format_;
-  int         interval_ms_;
-  double      disk_limit_pct_;
-  int         disk_check_interval_;
+  int interval_ms_;
+  double disk_limit_pct_;
+  int disk_check_interval_;
   std::size_t save_count_;
 };
 
