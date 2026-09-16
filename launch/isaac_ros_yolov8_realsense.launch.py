@@ -1,10 +1,22 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
 # Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # SPDX-License-Identifier: Apache-2.0
 
 """
-isaac_ros_yolov8_realsense.launch.py
+RealSense -> YOLOv8 -> ROI depth pipeline launch file.
 
 Runtime topics have NO /camera/ prefix (e.g. /color/image_raw, /roi,
 /cv_target). Full topic layout/inference chain/usage are in README.md —
@@ -23,29 +35,29 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
-from launch_ros.descriptions import ComposableNode
 from launch_ros.actions import Node as LaunchNode
+from launch_ros.descriptions import ComposableNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
 # Verified against runtime: with name='camera', namespace='', all realsense-ros
 # topics resolve to root (no /camera/ prefix).
-REALSENSE_COLOR_TOPIC      = '/color/image_raw'
-REALSENSE_INFO_TOPIC       = '/color/camera_info'
-REALSENSE_DEPTH_NS         = '/depth'
-REALSENSE_COLOR_NS         = '/color'
+REALSENSE_COLOR_TOPIC = '/color/image_raw'
+REALSENSE_INFO_TOPIC = '/color/camera_info'
+REALSENSE_DEPTH_NS = '/depth'
+REALSENSE_COLOR_NS = '/color'
 REALSENSE_EXTRINSICS_TOPIC = '/extrinsics/depth_to_color'
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_INPUT_W   = '640'
-DEFAULT_INPUT_H   = '480'
+DEFAULT_INPUT_W = '640'
+DEFAULT_INPUT_H = '480'
 DEFAULT_NETWORK_W = '640'
 DEFAULT_NETWORK_H = '640'
 
 # ── Snapshot defaults ─────────────────────────────────────────────────────────
 # ISAAC_ROS_WS is set in the Isaac ROS Docker environment. Falls back to the
 # standard path so the default works both inside and outside the container.
-ISAAC_ROS_WS         = os.environ.get('ISAAC_ROS_WS', '/workspaces/isaac_ros-dev')
+ISAAC_ROS_WS = os.environ.get('ISAAC_ROS_WS', '/workspaces/isaac_ros-dev')
 DEFAULT_SNAPSHOT_DIR = os.path.join(ISAAC_ROS_WS, 'data', 'realsense-captures')
 
 
@@ -70,86 +82,91 @@ def generate_launch_description():
         DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
         DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
         DeclareLaunchArgument('num_classes', default_value='8',
-            description='Number of object classes your model was trained on. '
-                        'MUST match your model — the decoder default of 80 (COCO) '
-                        'will cause a silent out-of-bounds crash if your model has '
-                        'a different class count. (ours has 8)'),
+                              description='Number of object classes your model was trained on. '
+                              'MUST match your model — the decoder default of 80 (COCO) '
+                              'will cause a silent out-of-bounds crash if your model has '
+                              'a different class count. (ours has 8)'),
         DeclareLaunchArgument('center_sample_fraction', default_value='0.25',
-            description='Fraction of bbox center to sample for depth (0.05–1.0)'),
+                              description='Fraction of bbox center to sample for depth '
+                              '(0.05–1.0)'),
         DeclareLaunchArgument('depth_max_age_s', default_value='0.05',
-            description='roi_depth_node: max |detection_stamp - depth_stamp| '
-                        'before a detection is dropped instead of paired with '
-                        'stale/future depth'),
+                              description='roi_depth_node: max |detection_stamp - depth_stamp| '
+                              'before a detection is dropped instead of paired with '
+                              'stale/future depth'),
         DeclareLaunchArgument('max_detections', default_value='16',
-            description='roi_depth_node: cap on detections processed per '
-                        '/detections_output callback'),
+                              description='roi_depth_node: cap on detections processed per '
+                              '/detections_output callback'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
-            description='detection_picker_visualizer.py only (bench overlay) '
-                        '-- target_selector.py has its own min_score param, '
-                        'set separately via auto.launch.py'),
+                              description='detection_picker_visualizer.py only (bench overlay) '
+                              '-- target_selector.py has its own min_score param, '
+                              'set separately via auto.launch.py'),
         DeclareLaunchArgument('ref_sys_topic', default_value='/dji_serial_bridge/ref_sys',
-            description='RefSysStatus topic thornbots_pkg/target_selector.py reads '
-                        'to learn the referee team colour for allied-detection '
-                        'filtering. Must match dji_serial_bridge_node\'s ~/ref_sys '
-                        'output (node name "dji_serial_bridge", so '
-                        '/dji_serial_bridge/ref_sys).'),
+                              description='RefSysStatus topic thornbots_pkg/target_selector.py '
+                              'reads to learn the referee team colour for allied-detection '
+                              "filtering. Must match dji_serial_bridge_node's ~/ref_sys "
+                              'output (node name "dji_serial_bridge", so '
+                              '/dji_serial_bridge/ref_sys).'),
         DeclareLaunchArgument('center_weight', default_value='1.0',
-            description='Weight of centrality (1 at boresight, 0 at the FOV edge) '
-                        'in target_selector.py\'s panel score — favours what the '
-                        'robot is already aimed at'),
+                              description='Weight of centrality (1 at boresight, 0 at the FOV '
+                              "edge) in target_selector.py's panel score — favours what the "
+                              'robot is already aimed at'),
         DeclareLaunchArgument('priority_class_bonus', default_value='0.5',
-            description='Score bonus added to a detection whose class is in '
-                        'priority_class_ids'),
+                              description='Score bonus added to a detection whose class is in '
+                              'priority_class_ids'),
         DeclareLaunchArgument('priority_class_ids', default_value='[2, 6]',
-            description='Class IDs treated as high-value targets (the 3rd target '
-                        'in each 0-3 / 4-7 team group)'),
+                              description='Class IDs treated as high-value targets (the 3rd '
+                              'target in each 0-3 / 4-7 team group)'),
         # ── DJI serial bridge ────────────────────────────────────────────────
         DeclareLaunchArgument('enable_serial_bridge', default_value='True',
-            description='Also launch dji_serial_bridge_node and the '
-                        'point_to_cv_target_node adapter that feeds it'),
+                              description='Also launch dji_serial_bridge_node and the '
+                              'point_to_cv_target_node adapter that feeds it'),
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
-            description='Within the serial bridge launch, also launch the '
-                        '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
+                              description='Within the serial bridge launch, also launch the '
+                              '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
-            description='Launch detection_picker_visualizer.py: overlays the '
-                        'picker\'s scoring factors (conf/centrality/priority/'
-                        'team-exclusion/score) on the network-space resize image '
-                        'and tags the detection the picker would pick. Publishes '
-                        '/yolov8_processed_image. For bench debugging.'),
+                              description='Launch detection_picker_visualizer.py: overlays the '
+                              "picker's scoring factors (conf/centrality/priority/"
+                              'team-exclusion/score) on the network-space resize image '
+                              'and tags the detection the picker would pick. Publishes '
+                              '/yolov8_processed_image. For bench debugging.'),
         DeclareLaunchArgument('debug_log', default_value='True',
-            description='Enable for lots more logs' ),
+                              description='Enable for lots more logs'),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
-            description='MCB serial device path'),
+                              description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
-            description='MCB serial baud rate'),
+                              description='MCB serial baud rate'),
         # ── Image snapshot ───────────────────────────────────────────────────
         DeclareLaunchArgument('enable_snapshot', default_value='False',
-            description='Capture training images from /color/image_raw to disk'),
+                              description='Capture training images from /color/image_raw to disk'),
         DeclareLaunchArgument('snapshot_output_dir', default_value=DEFAULT_SNAPSHOT_DIR,
-            description='Directory to write captured frames'),
+                              description='Directory to write captured frames'),
         DeclareLaunchArgument('snapshot_interval_ms', default_value='500',
-            description='Milliseconds between captures (500 = 2 Hz)'),
+                              description='Milliseconds between captures (500 = 2 Hz)'),
         DeclareLaunchArgument('snapshot_format', default_value='jpg',
-            description='Image format written to disk: jpg or png'),
+                              description='Image format written to disk: jpg or png'),
         DeclareLaunchArgument('snapshot_disk_limit_pct', default_value='75.0',
-            description='Refuse to launch (and stop capturing) above this disk usage %'),
+                              description='Refuse to launch (and stop capturing) above this '
+                              'disk usage %'),
     ]
 
     def create_nodes(context):
+
+        def perform(name):
+            return LaunchConfiguration(name).perform(context)
 
         # ── Pre-launch disk check ─────────────────────────────────────────────
         # This block is the ONLY thing that is conditional on enable_snapshot.
         # It runs in Python before any ROS nodes start, so a full disk produces
         # a clean error message instead of a C++ exception buried in the log.
         if LaunchConfiguration('enable_snapshot').perform(context) == 'True':
-            snap_dir   = LaunchConfiguration('snapshot_output_dir').perform(context)
-            limit_pct  = float(LaunchConfiguration('snapshot_disk_limit_pct').perform(context))
+            snap_dir = LaunchConfiguration('snapshot_output_dir').perform(context)
+            limit_pct = float(LaunchConfiguration('snapshot_disk_limit_pct').perform(context))
             os.makedirs(snap_dir, exist_ok=True)
-            usage    = shutil.disk_usage(snap_dir)
+            usage = shutil.disk_usage(snap_dir)
             used_pct = usage.used / usage.total * 100.0
             if used_pct > limit_pct:
                 raise RuntimeError(
-                    f'\n\n[ImageSnapshotNode] Disk at \'{snap_dir}\' is '
+                    f"\n\n[ImageSnapshotNode] Disk at '{snap_dir}' is "
                     f'{used_pct:.1f}% full (limit: {limit_pct:.0f}%).\n'
                     f'  Used:      {usage.used  / 1e9:.1f} GB\n'
                     f'  Available: {usage.free  / 1e9:.1f} GB\n'
@@ -160,38 +177,38 @@ def generate_launch_description():
 
         # ── Resolve launch arguments ──────────────────────────────────────────
         # Everything below runs unconditionally — snapshot or not.
-        input_w   = LaunchConfiguration('input_image_width').perform(context)
-        input_h   = LaunchConfiguration('input_image_height').perform(context)
+        input_w = LaunchConfiguration('input_image_width').perform(context)
+        input_h = LaunchConfiguration('input_image_height').perform(context)
         network_w = LaunchConfiguration('network_image_width').perform(context)
         network_h = LaunchConfiguration('network_image_height').perform(context)
-        image_mean    = LaunchConfiguration('image_mean').perform(context)
-        image_stddev  = LaunchConfiguration('image_stddev').perform(context)
-        encoding      = LaunchConfiguration('input_encoding').perform(context)
+        image_mean = LaunchConfiguration('image_mean').perform(context)
+        image_stddev = LaunchConfiguration('image_stddev').perform(context)
+        encoding = LaunchConfiguration('input_encoding').perform(context)
 
-        model_file_path      = LaunchConfiguration('model_file_path').perform(context)
-        engine_file_path     = LaunchConfiguration('engine_file_path').perform(context)
-        input_tensor_names   = json.loads(LaunchConfiguration('input_tensor_names').perform(context))
-        input_binding_names  = json.loads(LaunchConfiguration('input_binding_names').perform(context))
-        output_tensor_names  = json.loads(LaunchConfiguration('output_tensor_names').perform(context))
-        output_binding_names = json.loads(LaunchConfiguration('output_binding_names').perform(context))
-        verbose              = LaunchConfiguration('verbose').perform(context) == 'True'
-        force_engine_update  = LaunchConfiguration('force_engine_update').perform(context) == 'True'
+        model_file_path = LaunchConfiguration('model_file_path').perform(context)
+        engine_file_path = LaunchConfiguration('engine_file_path').perform(context)
+        input_tensor_names = json.loads(perform('input_tensor_names'))
+        input_binding_names = json.loads(perform('input_binding_names'))
+        output_tensor_names = json.loads(perform('output_tensor_names'))
+        output_binding_names = json.loads(perform('output_binding_names'))
+        verbose = LaunchConfiguration('verbose').perform(context) == 'True'
+        force_engine_update = LaunchConfiguration('force_engine_update').perform(context) == 'True'
         confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
-        nms_threshold        = float(LaunchConfiguration('nms_threshold').perform(context))
-        num_classes          = int(LaunchConfiguration('num_classes').perform(context))
-        center_sample_frac   = float(LaunchConfiguration('center_sample_fraction').perform(context))
-        depth_max_age_s      = float(LaunchConfiguration('depth_max_age_s').perform(context))
-        max_detections       = int(LaunchConfiguration('max_detections').perform(context))
-        min_det_score        = float(LaunchConfiguration('min_detection_score').perform(context))
-        ref_sys_topic        = LaunchConfiguration('ref_sys_topic').perform(context)
-        center_weight        = float(LaunchConfiguration('center_weight').perform(context))
+        nms_threshold = float(LaunchConfiguration('nms_threshold').perform(context))
+        num_classes = int(LaunchConfiguration('num_classes').perform(context))
+        center_sample_frac = float(LaunchConfiguration('center_sample_fraction').perform(context))
+        depth_max_age_s = float(LaunchConfiguration('depth_max_age_s').perform(context))
+        max_detections = int(LaunchConfiguration('max_detections').perform(context))
+        min_det_score = float(LaunchConfiguration('min_detection_score').perform(context))
+        ref_sys_topic = LaunchConfiguration('ref_sys_topic').perform(context)
+        center_weight = float(LaunchConfiguration('center_weight').perform(context))
         priority_class_bonus = float(LaunchConfiguration('priority_class_bonus').perform(context))
-        priority_class_ids   = [int(c) for c in
-                                json.loads(LaunchConfiguration('priority_class_ids').perform(context))]
+        priority_class_ids = [int(c) for c in json.loads(perform('priority_class_ids'))]
 
         pkg_share = get_package_share_directory('realsense_yolov8_nitros_bridge')
 
-        print(f'[isaac_ros_yolov8_realsense] Color: {input_w}x{input_h} → network: {network_w}x{network_h}')
+        print(f'[isaac_ros_yolov8_realsense] Color: {input_w}x{input_h} '
+              f'→ network: {network_w}x{network_h}')
         print(f'[isaac_ros_yolov8_realsense] Depth center_sample_fraction: {center_sample_frac}')
         print(f'[isaac_ros_yolov8_realsense] Extrinsics topic: {REALSENSE_EXTRINSICS_TOPIC}')
         print(f'[isaac_ros_yolov8_realsense] Team-filter RefSysStatus topic: {ref_sys_topic}')
@@ -286,9 +303,9 @@ def generate_launch_description():
             remappings=[('image', REALSENSE_COLOR_TOPIC)],
             parameters=[{
                 'output_dir':          LaunchConfiguration('snapshot_output_dir').perform(context),
-                'interval_ms':         int(LaunchConfiguration('snapshot_interval_ms').perform(context)),
+                'interval_ms':         int(perform('snapshot_interval_ms')),
                 'format':              LaunchConfiguration('snapshot_format').perform(context),
-                'disk_limit_pct':      float(LaunchConfiguration('snapshot_disk_limit_pct').perform(context)),
+                'disk_limit_pct':      float(perform('snapshot_disk_limit_pct')),
                 'disk_check_interval': 20,
             }],
             extra_arguments=[{'use_intra_process_comms': True}],

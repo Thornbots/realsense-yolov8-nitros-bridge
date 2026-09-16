@@ -59,7 +59,7 @@ ament_target_dependencies(${PROJECT_NAME}_component
 #   realsense_nitros_bridge::NitrosRealsenseBridgeNode
 rclcpp_components_register_nodes(${PROJECT_NAME}_component
   "realsense_nitros_bridge::NitrosRealsenseBridgeNode"
-  "realsense_nitros_bridge::ImageSnapshotNode" 
+  "realsense_nitros_bridge::ImageSnapshotNode"
 )
 
 # ── Installation ──────────────────────────────────────────────────────────────

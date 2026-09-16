@@ -1,3 +1,17 @@
+// Copyright 2026 Thornbots
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // nitros_realsense_bridge_node.cpp
 //
 // PROTOTYPE — publishes a NitrosImage from a sensor_msgs/Image subscription
@@ -24,116 +38,121 @@ namespace realsense_nitros_bridge
 class NitrosRealsenseBridgeNode : public rclcpp::Node
 {
 public:
-    explicit NitrosRealsenseBridgeNode(const rclcpp::NodeOptions & opts = rclcpp::NodeOptions())
-    : Node("nitros_realsense_bridge", opts),
-      pinned_buf_(nullptr),
-      pinned_size_(0)
-    {
-        // Subscribe to the realsense color topic (sensor_msgs/Image, CPU memory)
-        sub_ = create_subscription<sensor_msgs::msg::Image>(
-            "image", 10,
-            [this](sensor_msgs::msg::Image::ConstSharedPtr msg) { onImage(msg); });
+  explicit NitrosRealsenseBridgeNode(const rclcpp::NodeOptions & opts = rclcpp::NodeOptions())
+  : Node("nitros_realsense_bridge", opts),
+    pinned_buf_(nullptr),
+    pinned_size_(0)
+  {
+    // Subscribe to the realsense color topic (sensor_msgs/Image, CPU memory)
+    sub_ = create_subscription<sensor_msgs::msg::Image>(
+      "image", 10,
+      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {onImage(msg);});
 
-        // Publish NitrosImage — NITROS nodes (TensorRTNode, dnn_image_encoder)
-        // can subscribe to this without any additional copy.
-        nitros_pub_ = std::make_shared<
-            nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
-                nvidia::isaac_ros::nitros::NitrosImage>>(
-            this,
-            "nitros_image",
-            nvidia::isaac_ros::nitros::nitros_image_rgb8_t::supported_type_name);
+    // Publish NitrosImage — NITROS nodes (TensorRTNode, dnn_image_encoder)
+    // can subscribe to this without any additional copy.
+    nitros_pub_ = std::make_shared<
+      nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+        nvidia::isaac_ros::nitros::NitrosImage>>(
+      this,
+      "nitros_image",
+      nvidia::isaac_ros::nitros::nitros_image_rgb8_t::supported_type_name);
 
-        RCLCPP_INFO(get_logger(),
-            "NitrosRealsenseBridgeNode ready — "
-            "publishing NitrosImage on 'nitros_image'");
+    RCLCPP_INFO(
+      get_logger(),
+      "NitrosRealsenseBridgeNode ready — "
+      "publishing NitrosImage on 'nitros_image'");
+  }
+
+  ~NitrosRealsenseBridgeNode()
+  {
+    if (pinned_buf_) {
+      cudaFreeHost(pinned_buf_);
     }
-
-    ~NitrosRealsenseBridgeNode()
-    {
-        if (pinned_buf_) {
-            cudaFreeHost(pinned_buf_);
-        }
-    }
+  }
 
 private:
-    void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
-    {
-        const size_t frame_bytes = msg->step * msg->height;
+  void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
+  {
+    const size_t frame_bytes = msg->step * msg->height;
 
-        // ── Step 1: ensure pinned-memory staging buffer is large enough ────
-        // Pinned (page-locked) memory allows the CUDA DMA engine to transfer
-        // to GPU concurrently with CPU execution, unlike regular heap memory.
-        if (frame_bytes > pinned_size_) {
-            if (pinned_buf_) cudaFreeHost(pinned_buf_);
-            cudaError_t err = cudaMallocHost(&pinned_buf_, frame_bytes);
-            if (err != cudaSuccess) {
-                RCLCPP_ERROR(get_logger(), "cudaMallocHost failed: %s",
-                    cudaGetErrorString(err));
-                return;
-            }
-            pinned_size_ = frame_bytes;
-            RCLCPP_INFO(get_logger(),
-                "Allocated %.1f MB pinned staging buffer",
-                frame_bytes / 1e6);
-        }
-
-        // ── Step 2: copy CPU frame into pinned staging buffer ──────────────
-        // If the realsense node ran with IPC enabled (same container), msg->data
-        // is the original shared_ptr — no DDS copy happened before this point.
-        std::memcpy(pinned_buf_, msg->data.data(), frame_bytes);
-
-        // ── Step 3: allocate GPU buffer and H2D transfer ───────────────────
-        // Using the default CUDA stream (0).  For production, use a stream from
-        // a GXF CudaStreamPool to overlap this transfer with GPU inference of
-        // the previous frame.
-        void * gpu_buf = nullptr;
-        cudaError_t err = cudaMalloc(&gpu_buf, frame_bytes);
-        if (err != cudaSuccess) {
-            RCLCPP_ERROR(get_logger(), "cudaMalloc failed: %s",
-                cudaGetErrorString(err));
-            return;
-        }
-
-        err = cudaMemcpy(gpu_buf, pinned_buf_, frame_bytes, cudaMemcpyHostToDevice);
-        if (err != cudaSuccess) {
-            RCLCPP_ERROR(get_logger(), "cudaMemcpy H2D failed: %s",
-                cudaGetErrorString(err));
-            cudaFree(gpu_buf);
-            return;
-        }
-
-        // ── Step 4: wrap in NitrosImage and publish ────────────────────────
-        // NitrosImageBuilder takes ownership of gpu_buf.
-        // Downstream NITROS nodes (TensorRTNode etc.) receive the GPU pointer
-        // without any further copy.
-        namespace ni = nvidia::isaac_ros::nitros;
-        namespace se = sensor_msgs::image_encodings;
-
-        const std::string & enc = msg->encoding;
-        const std::string nitros_enc =
-            (enc == "bgr8")  ? se::BGR8  :
-            (enc == "rgba8") ? se::RGBA8 :
-            se::RGB8;  // default / rgb8
-
-        ni::NitrosImage nitros_image =
-            ni::NitrosImageBuilder()
-            .WithHeader(msg->header)
-            .WithEncoding(nitros_enc)
-            .WithDimensions(msg->height, msg->width)
-            .WithGpuData(gpu_buf)
-            .Build();
-
-        nitros_pub_->publish(nitros_image);
+    // ── Step 1: ensure pinned-memory staging buffer is large enough ────
+    // Pinned (page-locked) memory allows the CUDA DMA engine to transfer
+    // to GPU concurrently with CPU execution, unlike regular heap memory.
+    if (frame_bytes > pinned_size_) {
+      if (pinned_buf_) {cudaFreeHost(pinned_buf_);}
+      cudaError_t err = cudaMallocHost(&pinned_buf_, frame_bytes);
+      if (err != cudaSuccess) {
+        RCLCPP_ERROR(
+          get_logger(), "cudaMallocHost failed: %s",
+          cudaGetErrorString(err));
+        return;
+      }
+      pinned_size_ = frame_bytes;
+      RCLCPP_INFO(
+        get_logger(),
+        "Allocated %.1f MB pinned staging buffer",
+        frame_bytes / 1e6);
     }
 
-    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
+    // ── Step 2: copy CPU frame into pinned staging buffer ──────────────
+    // If the realsense node ran with IPC enabled (same container), msg->data
+    // is the original shared_ptr — no DDS copy happened before this point.
+    std::memcpy(pinned_buf_, msg->data.data(), frame_bytes);
 
-    std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
-        nvidia::isaac_ros::nitros::NitrosImage>> nitros_pub_;
+    // ── Step 3: allocate GPU buffer and H2D transfer ───────────────────
+    // Using the default CUDA stream (0).  For production, use a stream from
+    // a GXF CudaStreamPool to overlap this transfer with GPU inference of
+    // the previous frame.
+    void * gpu_buf = nullptr;
+    cudaError_t err = cudaMalloc(&gpu_buf, frame_bytes);
+    if (err != cudaSuccess) {
+      RCLCPP_ERROR(
+        get_logger(), "cudaMalloc failed: %s",
+        cudaGetErrorString(err));
+      return;
+    }
 
-    // Pinned (page-locked) staging buffer — reused across frames
-    void *  pinned_buf_;
-    size_t  pinned_size_;
+    err = cudaMemcpy(gpu_buf, pinned_buf_, frame_bytes, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+      RCLCPP_ERROR(
+        get_logger(), "cudaMemcpy H2D failed: %s",
+        cudaGetErrorString(err));
+      cudaFree(gpu_buf);
+      return;
+    }
+
+    // ── Step 4: wrap in NitrosImage and publish ────────────────────────
+    // NitrosImageBuilder takes ownership of gpu_buf.
+    // Downstream NITROS nodes (TensorRTNode etc.) receive the GPU pointer
+    // without any further copy.
+    namespace ni = nvidia::isaac_ros::nitros;
+    namespace se = sensor_msgs::image_encodings;
+
+    const std::string & enc = msg->encoding;
+    const std::string nitros_enc =
+      (enc == "bgr8") ? se::BGR8 :
+      (enc == "rgba8") ? se::RGBA8 :
+      se::RGB8;        // default / rgb8
+
+    ni::NitrosImage nitros_image =
+      ni::NitrosImageBuilder()
+      .WithHeader(msg->header)
+      .WithEncoding(nitros_enc)
+      .WithDimensions(msg->height, msg->width)
+      .WithGpuData(gpu_buf)
+      .Build();
+
+    nitros_pub_->publish(nitros_image);
+  }
+
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
+
+  std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+      nvidia::isaac_ros::nitros::NitrosImage>> nitros_pub_;
+
+  // Pinned (page-locked) staging buffer — reused across frames
+  void * pinned_buf_;
+  size_t pinned_size_;
 };
 
 }  // namespace realsense_nitros_bridge
