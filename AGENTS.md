@@ -26,3 +26,10 @@ producing an error. Verify against `README.md` §2 before changing composition.
 - Owns the camera → NITROS → YOLOv8 path and its `/detections_output`.
   Per-detection depth/bearing belongs to `../Realsense_ROI_Depth_Rectifier`;
   target selection and tracking to `../thornbots_pkg`.
+
+## Committing
+
+This package is a submodule of `thornbots_workspace`, on branch `main`. Commit
+and push here first, then bump this gitlink in `../` — one logical change, one
+bump, never a gitlink pointing at an unpushed commit. Full rule in
+`../CLAUDE.md` § Packages.
