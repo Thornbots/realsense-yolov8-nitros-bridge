@@ -27,6 +27,14 @@ producing an error. Verify against `README.md` §2 before changing composition.
   Per-detection depth/bearing belongs to `../Realsense_ROI_Depth_Rectifier`;
   target selection and tracking to `../thornbots_pkg`.
 
+## Open
+
+- **Jazzy: `cv_bridge/cv_bridge.h` to `.hpp` in `image_snapshot_node.cpp`,
+  and rebuild `yolo11s_fp16.plan` from ONNX for JetPack 7.2's TensorRT.** The
+  4.6 NITROS headers, plugin names and parameters match what this package
+  uses. The `take()` note in README.md goes stale on Jazzy.
+  `../JAZZY_PLAN.md`.
+
 ## Committing
 
 This package is a submodule of `thornbots_workspace`, on branch `main`. Commit
