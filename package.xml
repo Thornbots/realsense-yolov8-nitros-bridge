@@ -20,8 +20,7 @@
   <depend>rclcpp_components</depend>
   <!-- Standard image message (subscription side) -->
   <depend>sensor_msgs</depend>
-  <!-- NITROS managed publisher + NitrosImage type -->
-  <depend>isaac_ros_managed_nitros</depend>
+  <!-- NitrosImage type (an rclcpp TypeAdapter since Isaac ROS 4.x) -->
   <depend>isaac_ros_nitros_image_type</depend>
   <depend>cv_bridge</depend>
   <!-- Launch-time: the bridge launch file includes the dnn_image_encoder

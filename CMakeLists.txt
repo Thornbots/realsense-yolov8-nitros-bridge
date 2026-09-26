@@ -15,7 +15,6 @@ find_package(ament_cmake          REQUIRED)
 find_package(rclcpp               REQUIRED)
 find_package(rclcpp_components    REQUIRED)
 find_package(sensor_msgs          REQUIRED)
-find_package(isaac_ros_managed_nitros    REQUIRED)
 find_package(isaac_ros_nitros_image_type REQUIRED)
 
 # ── CUDA ─────────────────────────────────────────────────────────────────────
@@ -48,7 +47,6 @@ ament_target_dependencies(${PROJECT_NAME}_component
   rclcpp
   rclcpp_components
   sensor_msgs
-  isaac_ros_managed_nitros
   isaac_ros_nitros_image_type
   cv_bridge
   OpenCV

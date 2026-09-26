@@ -10,11 +10,16 @@
 # '640x480x30' and update this comment again.
 # see README.md for the frame-rate-split rationale
 
+# realsense-ros 4.56 reads <module>.<stream>_profile and ignores the bare
+# 'profile' key, falling back to the device default (not 640x480x60).
+# 'profile' is what realsense-ros 4.51.1 (Humble) reads.
 rgb_camera:
+  color_profile: '640x480x60'
   profile: '640x480x60'
 color_qos: "DEFAULT"
 
 depth_module:
+  depth_profile: '640x480x60'
   profile: '640x480x60'
   emitter_enabled: 1       # Keep IR emitter ON for structured-light depth accuracy.
   emitter_on_off: false    # Constant emission (not alternating with IR off frames).

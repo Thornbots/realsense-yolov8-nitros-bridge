@@ -1,8 +1,27 @@
 # realsense-yolov8-nitros-bridge
 
 Node and launch file optimising the interface between the realsense node
-and the isaac-ros-3.2 yolov8 example. Most of this README is the copy-
-boundary analysis behind those optimisations.
+and the Isaac ROS yolov8 example. Most of this README is the copy-
+boundary analysis behind those optimisations, written against Isaac ROS
+3.2 (Humble).
+
+On the `jazzy` branch (Isaac ROS 4.6, realsense-ros 4.56) some of the
+details below have changed:
+
+- The DNN image encoder is one node, `DnnImageEncoderNode`, not a chain
+  of `ResizeNode`, `ImageToTensorNode` and friends, and it publishes no
+  intermediate image. It still letterboxes (uniform scale, centred zero
+  padding) and still takes a CPU `sensor_msgs/Image`, so copy B remains.
+  Its output tensor is named `output_tensor` unless `tensor_name` is set;
+  the launch file sets it to `input_tensor` for `TensorRTNode`.
+- NITROS no longer runs on GXF. `NitrosImage` is an rclcpp `TypeAdapter`
+  over a CUDA buffer, synchronised with CUDA events (4.5 onward), and is
+  published with a plain `create_publisher<NitrosImage>` with
+  intra-process on. `ManagedNitrosPublisher` is gone in practice: 4.6's
+  header includes `nitros_type_view.hpp`, which no 4.6 package ships.
+- realsense-ros 4.56 reads `rgb_camera.color_profile` and
+  `depth_module.depth_profile`, publishes node-private topics
+  (`~/color/image_raw`), and latches the extrinsics once.
 
 ## 1. The problem
 
@@ -144,8 +163,10 @@ Trimmed-out detail from in-code comments, kept here for reference.
 
 #### Verified runtime topic layout
 
-With `ComposableNode(name='camera', namespace='')`, realsense-ros resolves
-all topics against the root namespace, and there is NO `/camera/` prefix:
+The pipeline uses these root topics. realsense-ros 4.51.1 (Humble)
+publishes them there with `ComposableNode(name='camera', namespace='')`;
+4.56 publishes `/camera/...` and the camera node's `remappings` move the
+five below back to root, which is also where `sim` publishes them:
 
 ```
 /color/image_raw               → dnn_image_encoder
@@ -155,9 +176,8 @@ all topics against the root namespace, and there is NO `/camera/` prefix:
 /extrinsics/depth_to_color     → extrinsics_relay_node → roi_depth_node params
 ```
 
-If you launch with an explicit namespace (e.g. `namespace='camera'`), all
-topics gain a `/camera/` prefix and these constants must be updated to
-match.
+If you launch with an explicit namespace (e.g. `namespace='camera'`), the
+remapping sources and these constants must be updated to match.
 
 #### Full inference chain
 
@@ -211,10 +231,10 @@ ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py 
 
 ### `src/image_snapshot_node.cpp`
 
-`rclcpp::Subscription::take()` in Humble (and Galactic) accepts a value
-reference (`ROSMessageType&`), not a `SharedPtr`. The message is moved into
-a `shared_ptr` before being passed to `cv_bridge` so `toCvShare` can alias
-the buffer without a pixel copy. The `SharedPtr` overload was added in Iron.
+`rclcpp::Subscription::take()` accepts a value reference
+(`ROSMessageType&`), not a `SharedPtr`, in Humble and Jazzy alike. The
+message is moved into a `shared_ptr` before being passed to `cv_bridge` so
+`toCvShare` can alias the buffer without a pixel copy.
 
 ### `src/nitros_realsense_bridge_node.cpp`
 

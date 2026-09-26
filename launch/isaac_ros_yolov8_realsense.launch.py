@@ -40,8 +40,9 @@ from launch_ros.descriptions import ComposableNode
 
 
 # ── Topic roots ───────────────────────────────────────────────────────────────
-# Verified against runtime: with name='camera', namespace='', all realsense-ros
-# topics resolve to root (no /camera/ prefix).
+# realsense-ros 4.56 publishes node-private topics (~/color/image_raw ->
+# /camera/color/image_raw for name='camera', namespace=''). The camera node
+# remaps the ones used here back to root, the names sim and 4.51.1 use.
 REALSENSE_COLOR_TOPIC = '/color/image_raw'
 REALSENSE_INFO_TOPIC = '/color/camera_info'
 REALSENSE_DEPTH_NS = '/depth'
@@ -168,8 +169,8 @@ def generate_launch_description():
                 raise RuntimeError(
                     f"\n\n[ImageSnapshotNode] Disk at '{snap_dir}' is "
                     f'{used_pct:.1f}% full (limit: {limit_pct:.0f}%).\n'
-                    f'  Used:      {usage.used  / 1e9:.1f} GB\n'
-                    f'  Available: {usage.free  / 1e9:.1f} GB\n'
+                    f'  Used:      {usage.used / 1e9:.1f} GB\n'
+                    f'  Available: {usage.free / 1e9:.1f} GB\n'
                     f'  Total:     {usage.total / 1e9:.1f} GB\n'
                     'Free up space or set snapshot_output_dir:=<path> '
                     'or snapshot_disk_limit_pct:=<higher_value>.\n'
@@ -225,6 +226,13 @@ def generate_launch_description():
             namespace='',
             parameters=[
                 os.path.join(pkg_share, 'config', 'realsense_640x480x60.yaml'),
+            ],
+            remappings=[
+                ('/camera/color/image_raw', REALSENSE_COLOR_TOPIC),
+                ('/camera/color/camera_info', REALSENSE_INFO_TOPIC),
+                ('/camera/depth/image_rect_raw', REALSENSE_DEPTH_NS + '/image_rect_raw'),
+                ('/camera/depth/camera_info', REALSENSE_DEPTH_NS + '/camera_info'),
+                ('/camera/extrinsics/depth_to_color', REALSENSE_EXTRINSICS_TOPIC),
             ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
@@ -354,6 +362,9 @@ def generate_launch_description():
                 'image_mean':              image_mean,
                 'image_stddev':            image_stddev,
                 'input_encoding':          encoding,
+                # 4.x names the output tensor 'output_tensor' by default;
+                # TensorRTNode looks it up by input_tensor_names.
+                'tensor_name':             input_tensor_names[0],
                 'attach_to_shared_component_container': 'True',
                 'component_container_name':             'yolov8_realsense_container',
                 'dnn_image_encoder_namespace':          'yolov8_encoder',
@@ -406,15 +417,15 @@ def generate_launch_description():
         # ── Detection picker visualizer ───────────────────────────────────────
         # Regular rclpy node (not composable). Params mirror target_selector.py's
         # 2D-era scoring so the overlay reflects roughly the same picking logic
-        # (pre-depth, for bench debugging). Subscribes with best-effort
-        # SensorDataQoS, matching the NITROS resize image stream.
+        # (pre-depth, for bench debugging). Letterboxes the colour image into
+        # network space itself: the 4.x encoder publishes no resize image.
         visualizer = LaunchNode(
             package='roi_depth_query',
             executable='detection_picker_visualizer.py',
             name='detection_picker_visualizer',
             parameters=[{
                 'detections_topic':     '/detections_output',
-                'image_topic':          '/yolov8_encoder/resize/image',
+                'image_topic':          REALSENSE_COLOR_TOPIC,
                 'ref_sys_topic':        ref_sys_topic,
                 'network_width':        int(network_w),
                 'network_height':       int(network_h),

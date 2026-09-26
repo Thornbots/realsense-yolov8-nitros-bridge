@@ -16,17 +16,20 @@
 //
 // PROTOTYPE — publishes a NitrosImage from a sensor_msgs/Image subscription
 // via CUDA pinned memory, replacing realsense->dnn_image_encoder. Requires
-// isaac_ros_managed_nitros, isaac_ros_nitros_image_type, CUDA::cudart.
+// isaac_ros_nitros_image_type, CUDA::cudart. Publishes with a plain
+// rclcpp publisher (NitrosImage is a TypeAdapter since Isaac ROS 4.x;
+// 4.6's ManagedNitrosPublisher header does not compile).
 // Drop into the same component_container_mt as TensorRTNode.
 // CAVEAT: librealsense lacks a pluggable allocator, so one
 // cudaMemcpyHostToDevice remains -- see README.md for design notes.
 
 #include <cuda_runtime.h>
 
+#include <cstring>
+
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
-#include "isaac_ros_managed_nitros/managed_nitros_publisher.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
 
@@ -50,12 +53,12 @@ public:
 
     // Publish NitrosImage — NITROS nodes (TensorRTNode, dnn_image_encoder)
     // can subscribe to this without any additional copy.
-    nitros_pub_ = std::make_shared<
-      nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
-        nvidia::isaac_ros::nitros::NitrosImage>>(
-      this,
-      "nitros_image",
-      nvidia::isaac_ros::nitros::nitros_image_rgb8_t::supported_type_name);
+    // Intra-process on, as in Isaac ROS 4.6's own NITROS nodes: the GPU
+    // buffer only travels by pointer within one process.
+    rclcpp::PublisherOptions pub_options;
+    pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+    nitros_pub_ = create_publisher<nvidia::isaac_ros::nitros::NitrosImage>(
+      "nitros_image", rclcpp::QoS(1), pub_options);
 
     RCLCPP_INFO(
       get_logger(),
@@ -100,9 +103,9 @@ private:
     std::memcpy(pinned_buf_, msg->data.data(), frame_bytes);
 
     // ── Step 3: allocate GPU buffer and H2D transfer ───────────────────
-    // Using the default CUDA stream (0).  For production, use a stream from
-    // a GXF CudaStreamPool to overlap this transfer with GPU inference of
-    // the previous frame.
+    // Synchronous copy on the default stream. To overlap it with inference,
+    // use NitrosImage::from_pool() + cudaMemcpyAsync on the write handle's
+    // stream (Isaac ROS 4.5+ event-based NitrosBuffer sync).
     void * gpu_buf = nullptr;
     cudaError_t err = cudaMalloc(&gpu_buf, frame_bytes);
     if (err != cudaSuccess) {
@@ -122,7 +125,9 @@ private:
     }
 
     // ── Step 4: wrap in NitrosImage and publish ────────────────────────
-    // NitrosImageBuilder takes ownership of gpu_buf.
+    // NitrosImageBuilder takes ownership of gpu_buf (freed with
+    // cudaFreeAsync when the last reader drops it). The copy above is
+    // synchronous, so it finishes before Build() records the write event.
     // Downstream NITROS nodes (TensorRTNode etc.) receive the GPU pointer
     // without any further copy.
     namespace ni = nvidia::isaac_ros::nitros;
@@ -147,8 +152,7 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
 
-  std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
-      nvidia::isaac_ros::nitros::NitrosImage>> nitros_pub_;
+  rclcpp::Publisher<nvidia::isaac_ros::nitros::NitrosImage>::SharedPtr nitros_pub_;
 
   // Pinned (page-locked) staging buffer — reused across frames
   void * pinned_buf_;
