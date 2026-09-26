@@ -20,11 +20,13 @@
 // Constructor throws std::runtime_error if the filesystem is already over
 // disk_limit_pct; save() re-checks every disk_check_interval saves and
 // cancels the timer if the threshold is crossed while running.
-// see README.md for design notes (rclcpp::Subscription::take() API caveat)
+// The subscription callback keeps the latest frame (a shared_ptr, so no
+// copy under intra-process comms); the timer saves it, at most once.
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -69,26 +71,27 @@ public:
     check_disk_or_throw();
 
     // ── Subscription ─────────────────────────────────────────────────────
-    // Empty callback: the executor never fires on frames we don't want.
-    // take() in the timer below polls for the latest frame at our cadence.
-    // QoS matches the realsense publisher: best-effort, volatile, depth 1.
-    // depth 1 → stale frames are dropped by the middleware before take() runs.
+    // Best-effort, depth 1: matches any publisher and never queues stale
+    // frames. The callback only swaps a pointer.
     auto qos = rclcpp::QoS(1).best_effort().durability_volatile();
     sub_ = create_subscription<sensor_msgs::msg::Image>(
       "image", qos,
-      [](sensor_msgs::msg::Image::SharedPtr) {});
+      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
+        std::lock_guard<std::mutex> lock(latest_mutex_);
+        latest_ = std::move(msg);
+      });
 
     // ── Timer ────────────────────────────────────────────────────────────
     timer_ = create_wall_timer(
       std::chrono::milliseconds(interval_ms_),
       [this]() {
-        // Humble's take() accepts a value reference, not a SharedPtr.
-        // We move the value into a shared_ptr so cv_bridge can alias
-        // the buffer without an extra pixel copy.
-        sensor_msgs::msg::Image msg;
-        rclcpp::MessageInfo info;
-        if (sub_->take(msg, info)) {
-          save(std::make_shared<sensor_msgs::msg::Image>(std::move(msg)));
+        sensor_msgs::msg::Image::ConstSharedPtr msg;
+        {
+          std::lock_guard<std::mutex> lock(latest_mutex_);
+          msg.swap(latest_);
+        }
+        if (msg) {
+          save(msg);
         }
       });
 
@@ -124,7 +127,7 @@ private:
 
   // ── Save ─────────────────────────────────────────────────────────────────
 
-  void save(const sensor_msgs::msg::Image::SharedPtr & msg)
+  void save(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
   {
     // Periodic disk check while running — cancel cleanly rather than
     // filling the disk and corrupting the last file.
@@ -165,6 +168,8 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  std::mutex latest_mutex_;
+  sensor_msgs::msg::Image::ConstSharedPtr latest_;
 
   std::string output_dir_;
   std::string format_;

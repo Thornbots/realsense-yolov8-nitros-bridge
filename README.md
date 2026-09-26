@@ -231,10 +231,12 @@ ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py 
 
 ### `src/image_snapshot_node.cpp`
 
-`rclcpp::Subscription::take()` accepts a value reference
-(`ROSMessageType&`), not a `SharedPtr`, in Humble and Jazzy alike. The
-message is moved into a `shared_ptr` before being passed to `cv_bridge` so
-`toCvShare` can alias the buffer without a pixel copy.
+The subscription callback stores the latest frame's `ConstSharedPtr` and
+the timer saves it. An earlier version polled `Subscription::take()` from
+the timer behind an empty callback, which saved nothing: the executor runs
+the callback, which consumes every frame first, and under intra-process
+comms (as launched) `take()` never sees a frame at all. On Jazzy there is
+still no `SharedPtr` overload of `take()`.
 
 ### `src/nitros_realsense_bridge_node.cpp`
 
