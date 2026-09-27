@@ -29,11 +29,8 @@ producing an error. Verify against `README.md` §2 before changing composition.
 
 ## Open
 
-- **Jazzy: `cv_bridge/cv_bridge.h` to `.hpp` in `image_snapshot_node.cpp`,
-  and rebuild `yolo11s_fp16.plan` from ONNX for JetPack 7.2's TensorRT.** The
-  4.6 NITROS headers, plugin names and parameters match what this package
-  uses. The `take()` note in README.md goes stale on Jazzy.
-  `../JAZZY_PLAN.md`.
+- **Jazzy:** ported on this repo's `jazzy` branch; its `AGENTS.md` has the
+  state. Commit Humble work here until the cutover.
 
 ## Committing
 
