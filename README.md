@@ -5,7 +5,7 @@ and the Isaac ROS yolov8 example. Most of this README is the copy-
 boundary analysis behind those optimisations, written against Isaac ROS
 3.2 (Humble).
 
-On the `jazzy` branch (Isaac ROS 4.6, realsense-ros 4.56) some of the
+On Jazzy (Isaac ROS 4.6, realsense-ros 4.56) some of the
 details below have changed:
 
 - The DNN image encoder is one node, `DnnImageEncoderNode`, not a chain
