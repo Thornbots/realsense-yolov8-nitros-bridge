@@ -29,11 +29,11 @@ producing an error. Verify against `README.md` §2 before changing composition.
 
 ## Open
 
-- **Jazzy branch (`jazzy`)** builds on the Isaac ROS 4.6 apt packages; the
-  4.6 changes it depends on are listed at the top of README.md. Not yet run
-  with a camera. Rebuild `yolo11s_fp16.plan` on each Orin from
-  `best.onnx` in `Thornbots/trained-models` (LFS,
-  `detect/yolo11s_realsense/v1/weights/`). `../JAZZY_PLAN.md`.
+- **Jazzy (this branch)** builds on the Isaac ROS 4.6 apt packages and
+  passes its tests; the 4.6 changes it depends on are listed at the top of
+  README.md. Not yet run with a camera (`../JAZZY_PLAN.md` step 5). Rebuild
+  `yolo11s_fp16.plan` on each Orin from `best.onnx` in
+  `Thornbots/trained-models` (LFS, `detect/yolo11s_realsense/v1/weights/`).
 
 ## Committing
 
