@@ -194,7 +194,7 @@ remapping sources and these constants must be updated to match.
   → target_selector.py  (thornbots_pkg package, does team filter, 3D robot
                           grouping, per-frame panel pick)
   → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: the winner)
-  → target_tracker.py  (thornbots_pkg, spin-centre KF estimate in odom)
+  → target_tracker     (thornbots_pkg, C++, spin-centre KF estimate in odom)
   → /cv/target_state  (dji_serial_bridge/msg/TargetState)
   → point_to_cv_target_node  (thornbots_pkg, converts to root frame, optional
                                lead solve; also republishes
