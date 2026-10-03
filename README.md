@@ -208,10 +208,11 @@ remapping sources and these constants must be updated to match.
 `target_selector.py` (in `thornbots_pkg`, launched from `auto.launch.py`)
 subscribes to the referee system status published by
 `dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`).
-Blue team excludes class IDs 0-3, red team excludes 4-7. Until the first
-status arrives, all detections pass through, with a throttled warning.
+Blue team excludes class IDs 0-3, red team excludes 4-7. Until a status
+with a non-zero `robot_id` arrives, all detections pass through, with a
+throttled warning.
 
-Set `enable_serial_bridge:=false` to omit the last two nodes, for example
+Set `enable_serial_bridge:=false` to omit `dji_serial_bridge_node`, for example
 when bench-testing the vision pipeline without the MCB attached.
 
 #### Usage
@@ -265,6 +266,6 @@ samples depth on detection events rather than every depth frame. That
 doesn't require lowering depth's own publish rate, since the node isn't
 reacting to every depth frame regardless of what rate it arrives at. If the
 UVC watchdog / "Depth stream start failure" reappears on
-bandwidth-constrained USB controllers at 60+60, cap `depth_module.profile`
+bandwidth-constrained USB controllers at 60+60, cap `depth_module.depth_profile`
 back to `640x480x30` in the yaml: that reduces USB bandwidth, not
 detection-processing load.
