@@ -18,9 +18,9 @@
 """
 RealSense -> YOLOv8 -> ROI depth pipeline launch file.
 
-Runtime topics have NO /camera/ prefix (e.g. /color/image_raw, /roi,
-/cv_target). Full topic layout/inference chain/usage are in README.md —
-see there before renaming topics or adding a namespace. Only
+Runtime topics have NO /camera/ prefix (e.g. /color/image_raw,
+/cv/panel_detections). Full topic layout/inference chain/usage are in
+README.md — see there before renaming topics or adding a namespace. Only
 engine_file_path is required; pass other args as plain name:=value.
 """
 
@@ -108,8 +108,9 @@ def generate_launch_description():
                               'output (node name "dji_serial_bridge", so '
                               '/dji_serial_bridge/ref_sys).'),
         DeclareLaunchArgument('center_weight', default_value='1.0',
-                              description='Weight of centrality (1 at boresight, 0 at the FOV '
-                              "edge) in target_selector.py's panel score — favours what the "
+                              description='Weight of centrality (1 at boresight, 0 at '
+                              "centrality_max_angle_rad) in target_selector.py's panel "
+                              'score — favours what the '
                               'robot is already aimed at'),
         DeclareLaunchArgument('priority_class_bonus', default_value='0.5',
                               description='Score bonus added to a detection whose class is in '
@@ -119,11 +120,15 @@ def generate_launch_description():
                               'target in each 0-3 / 4-7 team group)'),
         # ── DJI serial bridge ────────────────────────────────────────────────
         DeclareLaunchArgument('enable_serial_bridge', default_value='True',
-                              description='Also launch dji_serial_bridge_node and the '
-                              'point_to_cv_target_node adapter that feeds it'),
+                              description='Also launch dji_serial_bridge_node (the '
+                              'point_to_cv_target adapter comes from '
+                              'thornbots_pkg auto.launch.py)'),
         DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
-                              description='Within the serial bridge launch, also launch the '
-                              '/cv/panel_detection -> CVTarget adapter (vs. cv_target node only)'),
+                              description='Passed to dji_bridge.launch.py, which does not declare '
+                              'it, '
+                              'so it has no effect; the CVTarget adapter is '
+                              "toggled by thornbots_pkg auto.launch.py's "
+                              'enable_cv_target_bridge'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
                               description='Launch detection_picker_visualizer.py: overlays the '
                               "picker's scoring factors (conf/centrality/priority/"
@@ -373,7 +378,7 @@ def generate_launch_description():
 
         # ── Extrinsics relay ──────────────────────────────────────────────────
         # Standalone node (not composable) — subscribes to the extrinsics topic
-        # with VOLATILE QoS (matching the realsense publisher) and pushes the
+        # with TRANSIENT_LOCAL QoS (realsense-ros 4.56 latches it) and pushes the
         # result into roi_depth_node's parameter server, then exits.
         extrinsics_relay = LaunchNode(
             package='roi_depth_query',
@@ -391,11 +396,11 @@ def generate_launch_description():
         # point_to_cv_target_node (converts target_selector.py's picked
         # /cv/panel_detection, itself grouped from roi_depth_node's
         # /cv/panel_detections, into the CVTarget message the bridge expects)
-        # is launched separately by thornbots_pkg's auto.launch.py below, via
-        # enable_thornbots_pkg. dji_bridge.launch.py itself only declares
+        # is launched separately by thornbots_pkg's auto.launch.py (not by this
+        # file). dji_bridge.launch.py itself only declares
         # device/baudrate/debug_log/params_file -- enable_cv_target_bridge,
         # roi_point_topic, roi_topic, cv_target_topic below are not read by
-        # it (pre-existing, not touched here).
+        # it.
         serial_bridge = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
