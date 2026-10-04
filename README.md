@@ -215,6 +215,10 @@ throttled warning.
 Set `enable_serial_bridge:=false` to omit `dji_serial_bridge_node`, for example
 when bench-testing the vision pipeline without the MCB attached.
 
+`camera_initial_reset:=False` skips the RealSense USB reset (`initial_reset`
+in `config/realsense_640x480x60.yaml`), about 5 s. A camera fresh from
+power-on streams without it.
+
 #### Usage
 
 Only `engine_file_path` is required; everything else has a default. Pass

@@ -131,6 +131,10 @@ def generate_launch_description():
                               '/yolov8_processed_image. For bench debugging.'),
         DeclareLaunchArgument('debug_log', default_value='True',
                               description='Enable for lots more logs'),
+        DeclareLaunchArgument('camera_initial_reset', default_value='True',
+                              description='USB-reset the RealSense before streaming '
+                              '(~5 s). The boot service skips it on the first start '
+                              'after power-on'),
         DeclareLaunchArgument('serial_device', default_value='/dev/ttyTHS1',
                               description='MCB serial device path'),
         DeclareLaunchArgument('serial_baudrate', default_value='115200',
@@ -225,6 +229,7 @@ def generate_launch_description():
             namespace='',
             parameters=[
                 os.path.join(pkg_share, 'config', 'realsense_640x480x60.yaml'),
+                {'initial_reset': perform('camera_initial_reset') == 'True'},
             ],
             remappings=[
                 ('/camera/color/image_raw', REALSENSE_COLOR_TOPIC),
