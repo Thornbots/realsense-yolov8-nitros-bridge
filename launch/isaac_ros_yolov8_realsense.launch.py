@@ -123,12 +123,6 @@ def generate_launch_description():
                               description='Also launch dji_serial_bridge_node (the '
                               'point_to_cv_target adapter comes from '
                               'thornbots_pkg auto.launch.py)'),
-        DeclareLaunchArgument('enable_cv_target_bridge', default_value='True',
-                              description='Passed to dji_bridge.launch.py, which does not declare '
-                              'it, '
-                              'so it has no effect; the CVTarget adapter is '
-                              "toggled by thornbots_pkg auto.launch.py's "
-                              'enable_cv_target_bridge'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
                               description='Launch detection_picker_visualizer.py: overlays the '
                               "picker's scoring factors (conf/centrality/priority/"
@@ -397,10 +391,7 @@ def generate_launch_description():
         # /cv/panel_detection, itself grouped from roi_depth_node's
         # /cv/panel_detections, into the CVTarget message the bridge expects)
         # is launched separately by thornbots_pkg's auto.launch.py (not by this
-        # file). dji_bridge.launch.py itself only declares
-        # device/baudrate/debug_log/params_file -- enable_cv_target_bridge,
-        # roi_point_topic, roi_topic, cv_target_topic below are not read by
-        # it.
+        # file).
         serial_bridge = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
@@ -410,12 +401,7 @@ def generate_launch_description():
             launch_arguments={
                 'device':                  LaunchConfiguration('serial_device'),
                 'baudrate':                LaunchConfiguration('serial_baudrate'),
-                'enable_cv_target_bridge': LaunchConfiguration('enable_cv_target_bridge'),
-                'roi_point_topic':         '/cv/panel_detection',
-                'roi_topic':               '/roi',
-                'cv_target_topic':         '/cv_target',
-                'debug_log':       LaunchConfiguration('debug_log'),
-
+                'debug_log':               LaunchConfiguration('debug_log'),
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_serial_bridge')),
         )
