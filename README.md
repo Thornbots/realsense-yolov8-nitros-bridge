@@ -23,6 +23,38 @@ details below have changed:
   `depth_module.depth_profile`, publishes node-private topics
   (`~/color/image_raw`), and latches the extrinsics once.
 
+## Full robot pipeline
+
+The YOLO launch publishes `/cv/panel_detections`. `auto.launch.py` runs
+selection, tracking, aiming, localization and the hardware drivers; see
+[the node diagram](../thornbots_pkg/README.md#nodes).
+
+For a manual run, stop the boot service on the robot host first:
+`sudo systemctl stop thornbots`. Use two terminals in the robot container.
+If using a locally built overlay, source
+`/workspaces/isaac_ros-dev/install/setup.bash` in each terminal first.
+
+Terminal 1 — robot and aiming:
+
+```bash
+ros2 launch thornbots_pkg auto.launch.py real_hardware:=true \
+    'priority_class_ids:=[2,6]'
+```
+
+Terminal 2 — perception, using the TensorRT engine built for this robot:
+
+```bash
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
+    engine_file_path:=/workspaces/isaac_ros-dev/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
+    enable_serial_bridge:=False
+```
+
+Disabling this launch's serial bridge leaves `auto.launch.py` as the sole
+owner of `/dev/ttyTHS1`. Selection settings belong on `auto.launch.py`;
+its referee subscription supplies team colour. Stop both launches with
+Ctrl+C. For perception alone, run only terminal 2. Stop any standalone
+ROI camera launch before starting it.
+
 ## 1. The problem
 
 The standard `yolov8_tensor_rt.launch.py` pipeline:
@@ -178,57 +210,6 @@ five below back to root, which is also where `sim` publishes them:
 
 If you launch with an explicit namespace (e.g. `namespace='camera'`), the
 remapping sources and these constants must be updated to match.
-
-#### Full inference chain
-
-```
-/color/image_raw
-  → dnn_image_encoder (resize 640×480 → 640×640, normalise, interleave→planar)
-  → /tensor_pub → tensor_rt (TensorRT YOLOv8 inference)
-  → /tensor_sub → yolov8_decoder_node
-  → /detections_output  (Detection2DArray, bbox in 640×640 NETWORK space, ALL detections)
-  → roi_depth_node  (scales each bbox to color space, LUT lookup +
-                      center-sample depth, deprojects bbox corners + center)
-  → /cv/panel_detections  (dji_serial_bridge/msg/PanelDetectionArray, REP-103
-                            camera frame, one entry per detection)
-  → target_selector.py  (thornbots_pkg package, does team filter, 3D robot
-                          grouping, per-frame panel pick)
-  → /cv/panel_detection  (dji_serial_bridge/msg/PanelDetection: the winner)
-  → target_tracker     (thornbots_pkg, C++, spin-centre KF estimate in odom)
-  → /cv/target_state  (dji_serial_bridge/msg/TargetState)
-  → point_to_cv_target_node  (thornbots_pkg, converts to root frame, optional
-                               lead solve; also republishes
-                               /cv/panel_polygon for visualization)
-  → /cv/target  (dji_serial_bridge/msg/CVTarget)
-  → dji_serial_bridge_node  → UART → MCB / gimbal controller
-```
-
-#### Team-colour filtering
-
-`target_selector.py` (in `thornbots_pkg`, launched from `auto.launch.py`)
-subscribes to the referee system status published by
-`dji_serial_bridge_node` on `/dji_serial_bridge/ref_sys` (`RefSysStatus`).
-Blue team excludes class IDs 0-3, red team excludes 4-7. Until a status
-with a non-zero `robot_id` arrives, all detections pass through, with a
-throttled warning.
-
-Set `enable_serial_bridge:=false` to omit `dji_serial_bridge_node`, for example
-when bench-testing the vision pipeline without the MCB attached.
-
-#### Usage
-
-Only `engine_file_path` is required; everything else has a default. Pass
-args as plain `name:=value`, since bracketing one makes the token part of
-the *name* and the override is then silently ignored.
-`priority_class_ids:=[2,6]` is the sole exception, where the brackets are
-the list value.
-
-```bash
-ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
-    engine_file_path:=${ISAAC_ROS_WS}/isaac_ros_assets/models/yolo11/yolo11s_fp16.plan \
-    num_classes:=8 confidence_threshold:=0.25 nms_threshold:=0.45 \
-    priority_class_ids:=[2,6] serial_device:=/dev/ttyTHS1
-```
 
 ### `src/image_snapshot_node.cpp`
 
