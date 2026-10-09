@@ -98,7 +98,7 @@ def generate_launch_description():
                               description='roi_depth_node: cap on detections processed per '
                               '/detections_output callback'),
         DeclareLaunchArgument('min_detection_score', default_value='0.0',
-                              description='detection_picker_visualizer.py only (bench overlay) '
+                              description='detection_picker_visualizer only (bench overlay) '
                               '-- target_selector.py has its own min_score param, '
                               'set separately via auto.launch.py'),
         DeclareLaunchArgument('ref_sys_topic', default_value='/dji_serial_bridge/ref_sys',
@@ -124,7 +124,7 @@ def generate_launch_description():
                               'point_to_cv_target adapter comes from '
                               'thornbots_pkg auto.launch.py)'),
         DeclareLaunchArgument('enable_visualizer', default_value='False',
-                              description='Launch detection_picker_visualizer.py: overlays the '
+                              description='Launch detection_picker_visualizer: overlays the '
                               "picker's scoring factors (conf/centrality/priority/"
                               'team-exclusion/score) on the network-space resize image '
                               'and tags the detection the picker would pick. Publishes '
@@ -417,7 +417,7 @@ def generate_launch_description():
         # network space itself: the 4.x encoder publishes no resize image.
         visualizer = LaunchNode(
             package='roi_depth_query',
-            executable='detection_picker_visualizer.py',
+            executable='detection_picker_visualizer',
             name='detection_picker_visualizer',
             parameters=[{
                 'detections_topic':     '/detections_output',
