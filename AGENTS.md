@@ -1,52 +1,18 @@
-# realsense-yolov8-nitros-bridge — agent notes
+# realsense-yolov8-nitros-bridge
 
-RealSense → Isaac ROS NITROS/YOLOv8 perception front end. **Reference docs live
-in `README.md`** — it is a copy-boundary analysis (where each memcpy happens,
-what NITROS zero-copy does and doesn't cover, the IPC compatibility matrix),
-plus a `## Notes` section per source file. Read it before changing the pipeline;
-the current shape is the conclusion of that analysis, not an accident.
-
-**The ROS package name is `realsense_yolov8_nitros_bridge`, not the directory
-name** — `--packages-select realsense-yolov8-nitros-bridge` selects nothing.
-
-**Shadowed by `/workspaces/ros2_ws`** (`Dockerfile.thornbots` LAYER 3 copies
-this directory in and builds it alongside our six other packages; editing it
-rebuilds all seven, so iterate with `colcon build` in the container instead).
-Once built locally, a `src/` edit is live under `dexec.sh` but not in the
-user's terminal. Confirm with
-`../isaac_ros_common/scripts/dexec.sh -- ros2 pkg prefix realsense_yolov8_nitros_bridge`.
-C++, so a source change always needs a rebuild; `--symlink-install` won't help.
-
-Launch-file/config edits interact with IPC: the launch file is what enables
-intra-process comms, and getting it wrong costs a full frame copy rather than
-producing an error. Verify against `README.md` §2 before changing composition.
+Follow [workspace rules](../AGENTS.md) and [CI](../docs/CI.md).
+ROS package: `realsense_yolov8_nitros_bridge`.
+Read [copy-boundary analysis](README.md#1-the-problem) and
+[IPC composition](README.md#2-copy-a-ros-2-middleware-copy-realsense--encoder)
+before changing the pipeline; incorrect composition silently adds a frame copy.
 
 ## Scope
 
-- Owns the camera → NITROS → YOLOv8 path and its `/detections_output`.
-  Per-detection depth/bearing belongs to `../Realsense_ROI_Depth_Rectifier`;
-  target selection and tracking to `../thornbots_pkg`.
+Own camera → NITROS → YOLO and `/detections_output`. Depth/bearing belongs to
+`Realsense_ROI_Depth_Rectifier`, selection/tracking to `thornbots_pkg`.
 
 ## Open
 
-- **Jazzy (`main`)** builds on the Isaac ROS 4.6 apt packages and
-  passes its tests; the 4.6 changes it depends on are listed at the top of
-  README.md. Robot validation: [hardware status](../JAZZY_FLASH.md#hardware-status). Rebuild
-  `yolo11s_fp16.plan` on each Orin from `best.onnx` in
-  `Thornbots/trained-models` (LFS, `detect/yolo11s_realsense/v1/weights/`).
-
-## Committing
-
-This package is a submodule of `thornbots_workspace`, on branch `nightly`. Commit
-and push here first, then bump this gitlink in `../` — one logical change, one
-bump, never a gitlink pointing at an unpushed commit. Full rule in
-`../CLAUDE.md` § Packages.
-
-## CI
-
-GitHub CI runs on PRs targeting main/nightly and pushes to both branches;
-manual runs are available. Shared lint is pinned to workspace `884bfe63ea4e` (tag `ci-tooling-884bfe6`). Existing diagnostics are recorded in
-`.github/quality-baseline.json`; new diagnostics fail. Do not expand the
-baseline to hide regressions. Syntax errors always fail.
-GPU/CUDA builds require the workspace's manual `ROS Jazzy` workflow and a
-provisioned `isaac-ros-jazzy` runner; GitHub-hosted lint still runs on every PR.
+Robot acceptance and rebuilding the TensorRT plan per Orin:
+[hardware status](../JAZZY_FLASH.md#hardware-status) and
+[full pipeline](README.md#full-robot-pipeline).
