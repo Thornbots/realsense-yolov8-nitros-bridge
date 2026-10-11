@@ -2,8 +2,8 @@
 
 Follow [workspace rules](../AGENTS.md) and [CI](../docs/CI.md).
 ROS package: `realsense_yolov8_nitros_bridge`.
-Read [copy-boundary analysis](README.md#1-the-problem) and
-[IPC composition](README.md#2-copy-a-ros-2-middleware-copy-realsense--encoder)
+Read [copy boundary](README.md#copy-boundary) and
+[pipeline composition](README.md#pipeline)
 before changing the pipeline; incorrect composition silently adds a frame copy.
 
 ## Scope
