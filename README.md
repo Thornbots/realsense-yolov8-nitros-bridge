@@ -1,12 +1,15 @@
 # realsense-yolov8-nitros-bridge
 
 Node and launch file optimising the interface between the realsense node
-and the Isaac ROS yolov8 example. Most of this README is the copy-
-boundary analysis behind those optimisations, written against Isaac ROS
-3.2 (Humble).
+and the Isaac ROS yolov8 example. For current use, read the Jazzy summary
+below and [Full robot pipeline](#full-robot-pipeline). Sections 1-7 are
+the copy-boundary analysis, written against Isaac ROS 3.2 (Humble) and
+kept as background: their GXF, `ResizeNode`/`ImageToTensorNode`,
+`CudaStreamPool` and `ManagedNitrosPublisher` references are Humble-era
+and do not apply to 4.6. The copy A / copy B reasoning itself still holds.
 
-On Jazzy (Isaac ROS 4.6, realsense-ros 4.56) some of the
-details below have changed:
+On Jazzy (Isaac ROS 4.6, realsense-ros 4.56) these differences from the
+Humble analysis apply:
 
 - The DNN image encoder is one node, `DnnImageEncoderNode`, not a chain
   of `ResizeNode`, `ImageToTensorNode` and friends, and it publishes no
@@ -145,6 +148,9 @@ CPU→GPU transfer, which still has to happen once.
 
 ## 4. The only real path to eliminating Copy B
 
+*Humble-era proposal (GXF/`ManagedNitrosPublisher`); on 4.6 use a plain
+`create_publisher<NitrosImage>` as described at the top.*
+
 To remove the H2D transfer, realsense-ros would need to:
 
 1. Allocate a CUDA pinned buffer (`cudaHostAlloc`) of sufficient size for a color frame.
@@ -169,6 +175,9 @@ four have to share a container for any of this to apply, and the launch
 file puts them in one `component_container_mt`.
 
 ## 6. CUDA stream ordering
+
+*Humble-era (GXF streams; NITROS no longer runs on GXF on 4.6). Not
+implemented here.*
 
 Both the `custom_nitros_dnn_image_encoder` example and the
 `dnn_image_encoder` package pass the default stream (`(cudaStream_t) 0`) to
