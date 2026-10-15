@@ -14,5 +14,5 @@ Own camera → NITROS → YOLO and `/detections_output`. Depth/bearing belongs t
 ## Open
 
 Robot acceptance and rebuilding the TensorRT plan per Orin:
-[hardware status](../JAZZY_FLASH.md#hardware-status) and
+[hardware status](../docs/JAZZY_FLASH.md#hardware-status) and
 [full pipeline](README.md#full-robot-pipeline).
