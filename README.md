@@ -38,8 +38,9 @@ its referee subscription supplies team colour. Stop both launches with
 Ctrl+C. For perception alone, run only terminal 2. Stop any standalone
 ROI camera launch before starting it.
 
-The engine is a per-Orin TensorRT plan built from `best.onnx`; see
-[hardware status](../docs/JAZZY_FLASH.md#hardware-status) and the
+The engine is a per-Orin TensorRT plan built from `best.onnx`
+(`Thornbots/trained-models`, LFS, `detect/yolo11s_realsense/v1/weights/`);
+rebuild it on each Orin after a TensorRT upgrade. See the
 [boot service](../isaac-ros-startup/README.md) (`launch.env` holds the same
 paths).
 
