@@ -20,8 +20,7 @@ If using a locally built overlay, source
 Terminal 1 — robot and aiming:
 
 ```bash
-ros2 launch thornbots_pkg auto.launch.py real_hardware:=true \
-    'priority_class_ids:=[2,6]'
+ros2 launch thornbots_pkg auto.launch.py
 ```
 
 Terminal 2 — perception, using the TensorRT engine built for this robot:
