@@ -5,10 +5,8 @@
   <name>realsense_yolov8_nitros_bridge</name>
   <version>0.1.0</version>
   <description>
-    Bridging node that receives a sensor_msgs/Image from realsense-ros,
-    stages it through CUDA pinned memory, and publishes a NitrosImage so
-    that the downstream Isaac ROS YOLOv8 / TensorRT pipeline can consume
-    it without any further CPU&#x2194;GPU copy.
+    RealSense to YOLOv8 TensorRT detection launch for the sentry, plus an
+    unused prototype node that bridges sensor_msgs/Image to NitrosImage.
   </description>
   <maintainer email="jenninbl@RHIT.edu">Thornbots</maintainer>
   <license>Apache-2.0</license>
