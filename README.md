@@ -117,7 +117,8 @@ Notes:
   to `input_tensor_names[0]` because `TensorRTNode` looks the tensor up by that
   name (the encoder's own default is `output_tensor`).
 - The visualizer arguments only drive the bench overlay
-  (`/yolov8_processed_image`), which letterboxes the color image itself.
+  (`/yolov8_processed_image`), which letterboxes the color image itself. The
+  real selector takes its settings from `auto.launch.py`.
 
 ## Copy boundary
 
