@@ -1,17 +1,13 @@
-# realsense_640x480x60.yaml
-#
-# Color 60 fps, depth 60 fps -- both streams run at the file's namesake
-# rate. Not yet re-verified against the USB 3.x bandwidth / UVC watchdog
-# ("Depth stream start failure") issue that motivated halving depth to
-# 30fps in an earlier revision (checked 2026-07-29: this file's
-# depth_module.profile was already '640x480x60', the halving was never
-# actually applied here despite the comment claiming it was). If the UVC
-# watchdog reappears on real hardware, drop depth_module.depth_profile back to
-# '640x480x30' and update this comment again.
-# see README.md for the frame-rate-split rationale
+# Color and depth at 640x480, 60 fps. See README.md#camera-profile.
 
 rgb_camera:
   color_profile: '640x480x60'
+  # Fixed short exposure limits motion blur and rolling-shutter skew on
+  # moving armor; gain recovers brightness. Exposure is in 100 us units
+  # (30 = 3 ms). Untuned starting values: tune on the field lighting.
+  enable_auto_exposure: false
+  exposure: 30
+  gain: 64
 color_qos: "DEFAULT"
 
 depth_module:
