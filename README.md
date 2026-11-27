@@ -164,3 +164,15 @@ not match detection load. If "Depth stream start failure" or UVC watchdog
 errors appear on a bandwidth-limited USB controller, cap
 `depth_module.depth_profile` at `640x480x30`; that reduces USB bandwidth, not
 processing load. Not yet re-verified on hardware at 60+60.
+
+Colour auto-exposure is off: a fixed 3 ms exposure with gain 64 keeps spinning
+armor sharp, since auto-exposure lengthens exposure indoors and smears the
+light bars. These are untuned starting values; tune them under field lighting
+and train on frames captured with the same settings. Very short exposures can
+show LED or mains flicker.
+
+Raising colour resolution alone gains nothing: the encoder letterboxes every
+frame to the 640×640 network input, so 848×480 or 1280×720 is downscaled
+back to 640 wide. More pixels on a target need a larger network input
+(re-exported engine, slower inference) or a crop around the tracked target.
+The D435 colour sensor also drops to 30 fps above 960×540.
