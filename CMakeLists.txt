@@ -11,19 +11,22 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
-# Only ament_cmake and rclcpp are required everywhere (the decoder core and its
-# test build on any ROS machine, including the Mac container). Each component
-# library builds only when its Isaac ROS / CUDA dependencies are found.
+# ISAAC_COMPONENTS=OFF builds only the YOLO26 decoding core and its test, for
+# hosts without Isaac ROS/CUDA (the Mac container). Robots and CI keep the
+# default ON, where every dependency is REQUIRED so nothing is silently skipped.
+option(ISAAC_COMPONENTS "Build the Isaac ROS / CUDA components" ON)
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp QUIET)
-find_package(rclcpp_components QUIET)
-find_package(sensor_msgs QUIET)
-find_package(isaac_ros_nitros_image_type QUIET)
-find_package(cv_bridge QUIET)
-find_package(OpenCV QUIET)
-find_package(CUDAToolkit QUIET)
-find_package(isaac_ros_tensor_list_interfaces QUIET)
-find_package(dji_serial_bridge QUIET)
+if(ISAAC_COMPONENTS)
+  find_package(rclcpp REQUIRED)
+  find_package(rclcpp_components REQUIRED)
+  find_package(sensor_msgs REQUIRED)
+  find_package(isaac_ros_nitros_image_type REQUIRED)
+  find_package(cv_bridge REQUIRED)
+  find_package(OpenCV REQUIRED)
+  find_package(CUDAToolkit REQUIRED)
+  find_package(isaac_ros_tensor_list_interfaces REQUIRED)
+  find_package(dji_serial_bridge REQUIRED)
+endif()
 
 # ── Pure C++ YOLO26 decoding core (no ROS, no CUDA) ───────────────────────────
 add_library(${PROJECT_NAME}_yolo26_core STATIC src/yolo26_decoder.cpp)
@@ -35,9 +38,7 @@ set_target_properties(${PROJECT_NAME}_yolo26_core PROPERTIES POSITION_INDEPENDEN
 set(INSTALL_TARGETS ${PROJECT_NAME}_yolo26_core)
 
 # ── Camera bridge + snapshot components (need NITROS, CUDA, cv_bridge) ───────
-if(rclcpp_FOUND AND rclcpp_components_FOUND AND sensor_msgs_FOUND AND
-  isaac_ros_nitros_image_type_FOUND AND cv_bridge_FOUND AND OpenCV_FOUND AND
-  CUDAToolkit_FOUND)
+if(ISAAC_COMPONENTS)
   add_library(${PROJECT_NAME}_component SHARED
     src/nitros_realsense_bridge_node.cpp
     src/image_snapshot_node.cpp
@@ -55,13 +56,10 @@ if(rclcpp_FOUND AND rclcpp_components_FOUND AND sensor_msgs_FOUND AND
     "realsense_nitros_bridge::ImageSnapshotNode"
   )
   list(APPEND INSTALL_TARGETS ${PROJECT_NAME}_component)
-else()
-  message(STATUS "Isaac ROS/CUDA deps not found: skipping camera bridge and snapshot components")
 endif()
 
 # ── YOLO26 decoder component (needs the tensor list and armor messages) ──────
-if(rclcpp_FOUND AND rclcpp_components_FOUND AND
-  isaac_ros_tensor_list_interfaces_FOUND AND dji_serial_bridge_FOUND)
+if(ISAAC_COMPONENTS)
   add_library(${PROJECT_NAME}_yolo26_component SHARED src/yolo26_decoder_node.cpp)
   target_link_libraries(${PROJECT_NAME}_yolo26_component ${PROJECT_NAME}_yolo26_core)
   ament_target_dependencies(${PROJECT_NAME}_yolo26_component
@@ -71,8 +69,6 @@ if(rclcpp_FOUND AND rclcpp_components_FOUND AND
     "realsense_nitros_bridge::Yolo26DecoderNode"
   )
   list(APPEND INSTALL_TARGETS ${PROJECT_NAME}_yolo26_component)
-else()
-  message(STATUS "tensor list/armor message deps not found: skipping Yolo26DecoderNode")
 endif()
 
 # ── Installation ──────────────────────────────────────────────────────────────

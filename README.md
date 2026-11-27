@@ -170,8 +170,8 @@ CUDA events, published with a plain `create_publisher<NitrosImage>`.
   in network pixels, no NMS; a shape that disagrees with `num_keypoints` is
   logged and nothing is published. The decoding core
   (`yolo26_decoder.hpp`) has no ROS/CUDA dependency and is gtest-covered;
-  the CMake builds it everywhere and each component only when its Isaac ROS
-  dependencies are found.
+  `-DISAAC_COMPONENTS=OFF` builds only the core and its test, for hosts
+  without Isaac ROS; the default requires every component's dependencies.
 - `realsense_nitros_bridge::NitrosRealsenseBridgeNode`: unused prototype, not
   launched. It stages each `Image` in pinned memory, copies it to a fresh
   device buffer with a synchronous `cudaMemcpy` and publishes a `NitrosImage`
