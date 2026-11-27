@@ -170,7 +170,10 @@ CUDA events, published with a plain `create_publisher<NitrosImage>`.
   in network pixels, no NMS; a shape that disagrees with `num_keypoints` is
   logged and nothing is published. The decoding core
   (`yolo26_decoder.hpp`) has no ROS/CUDA dependency and is gtest-covered;
-  `-DISAAC_COMPONENTS=OFF` builds only the core and its test, for hosts
+  The installed `librealsense_yolov8_nitros_bridge_yolo26_c` shared library
+  exposes the four-keypoint pose decoder through `yolo26_c.h`, including to
+  Python via `ctypes`. `-DISAAC_COMPONENTS=OFF` builds the core, shared
+  library and tests, for hosts
   without Isaac ROS; the default requires every component's dependencies.
 - `realsense_nitros_bridge::NitrosRealsenseBridgeNode`: unused prototype, not
   launched. It stages each `Image` in pinned memory, copies it to a fresh

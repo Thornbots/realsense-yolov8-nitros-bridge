@@ -35,7 +35,9 @@ target_include_directories(${PROJECT_NAME}_yolo26_core PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 set_target_properties(${PROJECT_NAME}_yolo26_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set(INSTALL_TARGETS ${PROJECT_NAME}_yolo26_core)
+add_library(${PROJECT_NAME}_yolo26_c SHARED src/yolo26_c.cpp)
+target_link_libraries(${PROJECT_NAME}_yolo26_c ${PROJECT_NAME}_yolo26_core)
+set(INSTALL_TARGETS ${PROJECT_NAME}_yolo26_core ${PROJECT_NAME}_yolo26_c)
 
 # ── Camera bridge + snapshot components (need NITROS, CUDA, cv_bridge) ───────
 if(ISAAC_COMPONENTS)
@@ -78,6 +80,8 @@ install(TARGETS ${INSTALL_TARGETS}
   RUNTIME DESTINATION bin
 )
 
+install(DIRECTORY include/ DESTINATION include)
+
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
@@ -88,8 +92,12 @@ if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_yolo26_ctypes COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/test_yolo26_ctypes.py
+    $<TARGET_FILE:${PROJECT_NAME}_yolo26_c>)
   ament_add_gtest(test_yolo26_decoder test/test_yolo26_decoder.cpp)
-  target_link_libraries(test_yolo26_decoder ${PROJECT_NAME}_yolo26_core)
+  target_link_libraries(test_yolo26_decoder ${PROJECT_NAME}_yolo26_core ${PROJECT_NAME}_yolo26_c)
 endif()
 
 ament_package()

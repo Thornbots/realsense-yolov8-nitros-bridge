@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "realsense_yolov8_nitros_bridge/yolo26_decoder.hpp"
+#include "realsense_yolov8_nitros_bridge/yolo26_c.h"
 
 using realsense_nitros_bridge::decode_yolo26;
 using realsense_nitros_bridge::Yolo26Config;
@@ -126,4 +127,30 @@ TEST(Yolo26Decoder, MaxDetectionsKeepsHighestScores)
   ASSERT_EQ(r.detections.size(), 2U);
   EXPECT_EQ(r.detections[0].class_id, 1);
   EXPECT_EQ(r.detections[1].class_id, 2);
+}
+
+TEST(Yolo26Decoder, CAbiMatchesCore)
+{
+  const auto tensor = concat({pose_row(0.8F, 2), pose_row(0.05F, 1)});
+  Yolo26Config config;
+  config.num_keypoints = 4;
+  const auto core = decode_yolo26(tensor.data(), tensor.size(), {1, 2, 18}, config);
+  float output[36]{};
+  char error[256]{};
+  const auto count = yolo26_decode_pose(
+    tensor.data(), tensor.size(), 2, 18, 0.25F, output, 2, error, sizeof(error));
+  ASSERT_EQ(count, static_cast<int64_t>(core.detections.size())) << error;
+  ASSERT_EQ(count, 1);
+  const auto & d = core.detections[0];
+  EXPECT_FLOAT_EQ(output[0], d.center_x);
+  EXPECT_FLOAT_EQ(output[1], d.center_y);
+  EXPECT_FLOAT_EQ(output[2], d.size_x);
+  EXPECT_FLOAT_EQ(output[3], d.size_y);
+  EXPECT_FLOAT_EQ(output[4], d.confidence);
+  EXPECT_FLOAT_EQ(output[5], d.class_id);
+  for (size_t k = 0; k < d.keypoints.size(); ++k) {
+    EXPECT_FLOAT_EQ(output[6 + 3 * k], d.keypoints[k].x);
+    EXPECT_FLOAT_EQ(output[7 + 3 * k], d.keypoints[k].y);
+    EXPECT_FLOAT_EQ(output[8 + 3 * k], d.keypoints[k].confidence);
+  }
 }
