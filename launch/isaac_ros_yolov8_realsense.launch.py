@@ -82,6 +82,12 @@ def generate_launch_description():
         DeclareLaunchArgument('force_engine_update', default_value='False'),
         DeclareLaunchArgument('confidence_threshold', default_value='0.25'),
         DeclareLaunchArgument('nms_threshold',        default_value='0.45'),
+        DeclareLaunchArgument('decoder', default_value='yolov8',
+                              description="'yolov8' (isaac_ros_yolov8, /detections_output) or "
+                              "'yolo26' (Yolo26DecoderNode, /cv/armor_keypoints)"),
+        DeclareLaunchArgument('num_keypoints', default_value='4',
+                              description='decoder:=yolo26 only: 4 for a pose model '
+                              '([1, N, 18]), 0 for detect-only ([1, N, 6])'),
         DeclareLaunchArgument('num_classes', default_value='8',
                               description='Number of object classes your model was trained on. '
                               'MUST match your model — the decoder default of 80 (COCO) '
@@ -199,6 +205,10 @@ def generate_launch_description():
         force_engine_update = LaunchConfiguration('force_engine_update').perform(context) == 'True'
         confidence_threshold = float(LaunchConfiguration('confidence_threshold').perform(context))
         nms_threshold = float(LaunchConfiguration('nms_threshold').perform(context))
+        decoder = perform('decoder')
+        if decoder not in ('yolov8', 'yolo26'):
+            raise RuntimeError(f"decoder must be 'yolov8' or 'yolo26', got '{decoder}'")
+        num_keypoints = int(perform('num_keypoints'))
         num_classes = int(LaunchConfiguration('num_classes').perform(context))
         center_sample_frac = float(LaunchConfiguration('center_sample_fraction').perform(context))
         depth_max_age_s = float(LaunchConfiguration('depth_max_age_s').perform(context))
@@ -275,6 +285,19 @@ def generate_launch_description():
             }],
         )
 
+        # ── YOLO26 decoder node ───────────────────────────────────────────────
+        # End-to-end (NMS-free) output -> /cv/armor_keypoints, capture stamp kept.
+        yolo26_decoder_node = ComposableNode(
+            name='yolo26_decoder',
+            package='realsense_yolov8_nitros_bridge',
+            plugin='realsense_nitros_bridge::Yolo26DecoderNode',
+            parameters=[{
+                'confidence_threshold': confidence_threshold,
+                'num_keypoints':        num_keypoints,
+                'output_tensor_name':   output_tensor_names[0],
+            }],
+        )
+
         # ── ROI depth node ────────────────────────────────────────────────────
         # depth_ns / color_ns must match the actual published topic roots.
         # With name='camera', namespace='': topics are at /depth/... and /color/...
@@ -286,7 +309,10 @@ def generate_launch_description():
             package='roi_depth_query',
             plugin='roi_depth_query::RoiDepthNode',
             name='roi_depth_node',
+            # Assumed roi_depth_query API: input_mode 'detections' (default,
+            # /detections_output) or 'armor_keypoints' (/cv/armor_keypoints).
             parameters=[{
+                **({'input_mode': 'armor_keypoints'} if decoder == 'yolo26' else {}),
                 'depth_ns':               REALSENSE_DEPTH_NS,         # '/depth'
                 'color_ns':               REALSENSE_COLOR_NS,         # '/color'
                 'depth_scale':            0.001,   # D435i Z16: raw uint16 → metres
@@ -329,7 +355,7 @@ def generate_launch_description():
         node_descriptions = [
             realsense_node,
             tensor_rt_node,
-            yolov8_decoder_node,
+            yolo26_decoder_node if decoder == 'yolo26' else yolov8_decoder_node,
             roi_depth_node,
         ]
         if LaunchConfiguration('enable_snapshot').perform(context) == 'True':

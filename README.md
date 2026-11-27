@@ -37,6 +37,20 @@ its referee subscription supplies team colour. Stop both launches with
 Ctrl+C. For perception alone, run only terminal 2. Stop any standalone
 ROI camera launch before starting it.
 
+YOLO26 corner-keypoint pose model (not the default; add to terminal 2):
+
+```bash
+ros2 launch realsense_yolov8_nitros_bridge isaac_ros_yolov8_realsense.launch.py \
+    engine_file_path:=<yolo26s-pose plan> decoder:=yolo26 num_keypoints:=4 \
+    enable_serial_bridge:=False
+```
+
+`decoder:=yolo26` starts `yolo26_decoder` instead of `yolov8_decoder_node`,
+publishes `/cv/armor_keypoints` and sets `roi_depth_node` to
+`input_mode: armor_keypoints`. The engine must be a static, end-to-end
+(NMS-free) export whose `output0` is `[1, N, 6+3K]`; see
+[Components](#components).
+
 The engine is a per-Orin TensorRT plan built from `best.onnx`
 (`Thornbots/trained-models`, LFS, `detect/yolo11s_realsense/v1/weights/`);
 rebuild it on each Orin after a TensorRT upgrade. See the
@@ -68,6 +82,7 @@ one component library (CUDA runtime, `cv_bridge`, OpenCV).
 | `tensor_rt` | TensorRT inference |
 | `yolov8_decoder_node` | Publishes `/detections_output` (`Detection2DArray`, 640×640 network space) |
 | `roi_depth_node` | Scales boxes to color space, samples depth, publishes `/cv/panel_detections` |
+| `yolo26_decoder` | With `decoder:=yolo26` instead of `yolov8_decoder_node`; publishes `/cv/armor_keypoints` |
 | `image_snapshot` | Only with `enable_snapshot:=True` |
 
 The DNN encoder (`isaac_ros_dnn_image_encoder`, namespace `yolov8_encoder`) is
@@ -101,7 +116,7 @@ list-valued ones as JSON strings.
 | Model | `engine_file_path` (empty), `model_file_path` (empty), `force_engine_update` (False), `verbose` (False) |
 | Tensor names | `input_tensor_names` (`["input_tensor"]`), `input_binding_names` (`["images"]`), `output_tensor_names` (`["output_tensor"]`), `output_binding_names` (`["output0"]`) |
 | Image sizes | `input_image_width`/`height` (640/480), `network_image_width`/`height` (640/640), `input_encoding` (rgb8), `image_mean` (`[0,0,0]`), `image_stddev` (`[1,1,1]`) |
-| Decoder | `confidence_threshold` (0.25), `nms_threshold` (0.45), `num_classes` (8) |
+| Decoder | `decoder` (`yolov8`; or `yolo26`), `num_keypoints` (4; yolo26 only, 0 = detect-only), `confidence_threshold` (0.25), `nms_threshold` (0.45), `num_classes` (8) |
 | ROI depth | `center_sample_fraction` (0.25), `depth_max_age_s` (0.05), `max_detections` (16) |
 | Serial bridge | `enable_serial_bridge` (True), `serial_device` (`/dev/ttyTHS1`), `serial_baudrate` (115200), `debug_log` (True) |
 | Camera | `camera_initial_reset` (True; USB reset, about 5 s) |
@@ -147,6 +162,16 @@ CUDA events, published with a plain `create_publisher<NitrosImage>`.
   frame at `interval_ms`, refuses to load above `disk_limit_pct` (the launch
   also checks beforehand and fails with a readable message), and re-checks
   every `disk_check_interval` saves, stopping capture if the limit is crossed.
+- `realsense_nitros_bridge::Yolo26DecoderNode`: reads TensorRT's `tensor_sub`
+  `TensorList` (plain `isaac_ros_tensor_list_interfaces` message; the ~22 KB
+  device-to-host copy is cheaper than a NITROS view) and publishes
+  `ArmorKeypointsArray` every frame, empty included, with the tensor list's
+  capture-stamped header. Rows are `x1 y1 x2 y2 score class (kx ky kconf)×K`
+  in network pixels, no NMS; a shape that disagrees with `num_keypoints` is
+  logged and nothing is published. The decoding core
+  (`yolo26_decoder.hpp`) has no ROS/CUDA dependency and is gtest-covered;
+  the CMake builds it everywhere and each component only when its Isaac ROS
+  dependencies are found.
 - `realsense_nitros_bridge::NitrosRealsenseBridgeNode`: unused prototype, not
   launched. It stages each `Image` in pinned memory, copies it to a fresh
   device buffer with a synchronous `cudaMemcpy` and publishes a `NitrosImage`
