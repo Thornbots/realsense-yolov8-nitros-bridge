@@ -309,9 +309,10 @@ def generate_launch_description():
             package='roi_depth_query',
             plugin='roi_depth_query::RoiDepthNode',
             name='roi_depth_node',
-            # Assumed roi_depth_query API: input_mode 'detections' (default,
-            # /detections_output) or 'armor_keypoints' (/cv/armor_keypoints).
-            parameters=[{
+            # input_mode 'armor_keypoints' reads /cv/armor_keypoints and solves
+            # plate pose with armor_geometry.yaml (the geometry's one home).
+            parameters=[os.path.join(get_package_share_directory('roi_depth_query'),
+                                     'config', 'armor_geometry.yaml'), {
                 **({'input_mode': 'armor_keypoints'} if decoder == 'yolo26' else {}),
                 'depth_ns':               REALSENSE_DEPTH_NS,         # '/depth'
                 'color_ns':               REALSENSE_COLOR_NS,         # '/color'
